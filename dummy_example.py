@@ -10,7 +10,7 @@ class beacon:
         self.y = y
 
     def ground_truth_d(self, index):
-        if index % 2 == 0:
+        if index % 2 != 0:
             current_position = np.array([[0],[1]])
         else:
             current_position = np.array([[1],[0]])
@@ -20,7 +20,7 @@ class beacon:
         return np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y])) # Measurement model with E[v] = 0
     
     def H(self, pos):
-        dx = (pos[0][0] - self.x)/(np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y])))
+        dx = (pos[0][0] - self.x)/(np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y]))) 
         dy = (pos[1][0] - self.y)/(np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y])))
         return np.array([[dx, dy]])
     
@@ -29,26 +29,23 @@ class robot:
 
     def __init__(self):
         self.pos = np.array([[0],[1]])
-        self.cov = 0.15*np.eye(2)
+        self.cov = 1*np.eye(2)
 
         
-N = 100 # Number of timesteps
-n_beacons = 3 # Number of beacons
+N = 1000 # Number of timesteps
 
 # Init 
 beacons = []
-# for _ in range(n_beacons):
-#     beacon_init = beacon(np.random.randint(-10,10),np.random.randint(-10,10))
-#     beacons = beacons.append()
+n_beacons = 3 # Number of beacons
 beacon1 = beacon(0,0)
 beacon2 = beacon(1,1)
-beacon3 = beacon(0,2)
-# beacons = [beacon1, beacon2]
-beacons = [beacon1, beacon2, beacon3]
+beacons = [beacon1, beacon2]
+# beacon3 = beacon(0,5)
+# beacons = [beacon1, beacon2, beacon3]
 robot = robot()
 
-Q = 0.15*np.eye(2) # Process noise covariance
-R = 0.15*np.eye(n_beacons) # Measurement noise covariance
+Q = 0.25*np.eye(2) # Process noise covariance
+R = 0.25*np.eye(n_beacons) # Measurement noise covariance
 K = np.zeros((2,n_beacons)) # Kalman gain
 H = np.zeros((n_beacons,2)) # Measurement Jacobian
 z = np.zeros((n_beacons,1)) # Measurement vector
@@ -66,7 +63,7 @@ positions = np.zeros((N,2))
 A = np.array([[0,1],[1,0]])
 
 i = 0
-while i in range(N):
+for i in range(N):
 
     # Prior update (Assume no uncertainty in the robot movement)
     robot.pos = np.dot(A,robot.pos) # Move the robot: x_p = A*x_m + E(v)
@@ -75,6 +72,8 @@ while i in range(N):
     #Calculate information matrix and vector
     info_matrix_p = np.linalg.inv(robot.cov)
     info_vector_p = info_matrix_p@robot.pos
+
+    print(info_vector_p)
 
     # Measurement update & calculate the information matrix and vector for the measurement
     for j,beacon in enumerate(beacons):
@@ -98,8 +97,7 @@ while i in range(N):
 
     info_vectors[i] = info_vector.T
     positions[i] = robot.pos.T
-
-    i += 1
+    
 
 #Plotting
 for i in range (N):
@@ -113,4 +111,10 @@ plt.plot(info_vectors[:, 0], info_vectors[:, 1], marker='x', color='blue', lines
 
 plt.title('Information vector')
 
+
+sum_info = np.sum(np.absolute(info_vectors), axis=1)
+
+plt.figure()
+plt.plot(sum_info, marker='x', color='green', linestyle='-', markersize=1)
+plt.title('sum of dimensions of information vector')
 plt.show()
