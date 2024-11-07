@@ -47,4 +47,5 @@ plt.show()
 
 
 # Generate covariance matrices
+# cov = np.zeros(())
 
