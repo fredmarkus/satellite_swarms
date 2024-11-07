@@ -33,19 +33,26 @@ class robot:
 
         
 N = 100 # Number of timesteps
+n_beacons = 3 # Number of beacons
 
 # Init 
+beacons = []
+# for _ in range(n_beacons):
+#     beacon_init = beacon(np.random.randint(-10,10),np.random.randint(-10,10))
+#     beacons = beacons.append()
 beacon1 = beacon(0,0)
 beacon2 = beacon(1,1)
-beacons = [beacon1, beacon2]
+beacon3 = beacon(0,2)
+# beacons = [beacon1, beacon2]
+beacons = [beacon1, beacon2, beacon3]
 robot = robot()
 
-R = 0.15*np.eye(2) # Measurement noise covariance
 Q = 0.15*np.eye(2) # Process noise covariance
-K = np.zeros((2,2)) # Kalman gain
-H = np.zeros((2,2)) # Measurement Jacobian
-z = np.zeros((2,1)) # Measurement vector
-actual_pos = np.zeros((2,1))
+R = 0.15*np.eye(n_beacons) # Measurement noise covariance
+K = np.zeros((2,n_beacons)) # Kalman gain
+H = np.zeros((n_beacons,2)) # Measurement Jacobian
+z = np.zeros((n_beacons,1)) # Measurement vector
+actual_pos = np.zeros((n_beacons,1))
 info_matrix = np.linalg.inv(robot.cov)
 info_vector = info_matrix@robot.pos
 
@@ -76,7 +83,6 @@ while i in range(N):
     
         actual_pos[j] = beacon.h(robot.pos) # Based on where the measurement model believes the robot is
 
-    print(z)    
     K = robot.cov@H.T@np.linalg.inv(H@robot.cov@H.T + R)
     robot.pos = robot.pos + K@(z - actual_pos)
     robot.cov = (np.eye(2) - K@H)@robot.cov
@@ -89,12 +95,13 @@ while i in range(N):
     info_vector = info_vector_p + I_vector
 
     # Store the information vector and position vector
+
     info_vectors[i] = info_vector.T
     positions[i] = robot.pos.T
 
     i += 1
 
-#Plotting of the robot position
+#Plotting
 for i in range (N):
     plt.plot(positions[i,0],positions[i,1],'ro')
 plt.axis([-2,2,-2,2])
@@ -102,11 +109,8 @@ plt.title('Robot position')
 
 
 plt.figure()
-# for i in range(N):
-#     plt.scatter(info_vectors[i,0],info_vectors[i,1],c='blue')
-plt.plot(info_vectors[:, 0], info_vectors[:, 1], marker='x', color='blue', linestyle='-', markersize=1)
+plt.plot(info_vectors[:, 0], info_vectors[:, 1], marker='x', color='blue', linestyle='-', markersize=5)
 
 plt.title('Information vector')
 
 plt.show()
-
