@@ -23,8 +23,6 @@ class beacon:
         dy = (pos[1][0] - self.y)/(np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y])))
         return np.array([[dx, dy]])
 
-        #Using polar coordinates
-        # return np.array([[1,0]])
 
 class robot:
 
