@@ -13,7 +13,7 @@ class landmark:
 class robot:
 
     def __init__(self, rob_cov_init):
-        self.pos = np.array([[0],[2]])
+        self.pos = np.array([[2],[0]])
         self.cov = rob_cov_init*np.eye(2)
 
     def h(self, landmark): #Provide a bearing
@@ -21,13 +21,13 @@ class robot:
     
     def H(self, landmark):
         coeff = 1/np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))
-        H11 = ((self.pos[0][0] - landmark.x)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))**3) + 1
-        H12 = (self.pos[0][0] - landmark.x)*(self.pos[1][0] - landmark.y)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))**3)
-        H22 = ((self.pos[1][0] - landmark.y)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))**3) + 1
+        H11 = ((self.pos[0][0] - landmark.x)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]])))**6 + 1
+        H12 = (self.pos[0][0] - landmark.x)*(self.pos[1][0] - landmark.y)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))**6)
+        H22 = ((self.pos[1][0] - landmark.y)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]])))**6 + 1
         return coeff*np.array([[H11, H12],[H12, H22]])
     
     def z_measure(self, index, R_weight):
-        if index % 2 != 0:
+        if index % 2 == 0:
             current_position = np.array([[0],[2]])
         else:
             current_position = np.array([[2],[0]])
@@ -41,7 +41,7 @@ class robot:
 
 
 # Parameters
-N = 2000  # Number of timesteps
+N = 1000  # Number of timesteps
 n_landmarks = 1 # Number of beacons
 Q_weight = 0.5
 R_weight = 0.25
@@ -55,10 +55,10 @@ robot = robot(rob_cov_init)
 
 Q = Q_weight*np.eye(2) # Process noise covariance
 R = R_weight*np.eye(2) # Measurement noise covariance
-K = np.zeros((2,n_landmarks)) # Kalman gain
-H = np.zeros((n_landmarks,2)) # Measurement Jacobian
-z = np.zeros((n_landmarks,1)) # Measurement vector
-actual_pos = np.zeros((n_landmarks,1))
+K = np.zeros((2,2)) # Kalman gain
+H = np.zeros((2,2)) # Measurement Jacobian
+z = np.zeros((2,1)) # Measurement vector
+actual_pos = np.zeros((2,1))
 info_matrix = np.linalg.inv(robot.cov)
 info_vector = info_matrix@robot.pos
 
@@ -91,7 +91,6 @@ for i in range(N):
 
     K = robot.cov@H.T@np.linalg.inv(H@robot.cov@H.T + R)
     robot.pos = robot.pos + K@(z - actual_pos)
-    print(z)
     robot.cov = (np.eye(2) - K@H)@robot.cov
 
 
@@ -103,13 +102,12 @@ for i in range(N):
     info_vector = info_vector_p + I_vector
 
     # print("-------------------------------------")
-    # print("Robot position: ",robot.pos)
     # print("Measurement Jacobian: \n", H)
     # print("Robot covariance", robot.cov)
     # print("Information matrix: ", info_matrix)
 
     # Store the information vector and position vector
-    info_vectors[i] = info_vector.T
+    # info_vectors[i] = info_vector.T
     positions[i] = robot.pos.T
 
 
@@ -139,4 +137,4 @@ for i in range (N):
 # plt.figure()
 # plt.plot(sum_info, marker='x', color='green', linestyle='-', markersize=1)
 # plt.title('sum of dimensions of information vector')
-# plt.show()
+plt.show()
