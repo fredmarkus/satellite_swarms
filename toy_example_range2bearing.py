@@ -22,20 +22,23 @@ class beacon:
         dx = (pos[0][0] - self.x)/(np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y]))) 
         dy = (pos[1][0] - self.y)/(np.linalg.norm(np.array([pos[0][0] - self.x, pos[1][0] - self.y])))
         return np.array([[dx, dy]])
-    
+
+        #Using polar coordinates
+        # return np.array([[1,0]])
 
 class robot:
 
-    def __init__(self, Q_weight):
+    def __init__(self, rob_cov_init):
         self.pos = np.array([[0],[1]])
-        self.cov = Q_weight*np.eye(2)
+        self.cov = rob_cov_init*np.eye(2)
 
 
 # Parameters
 N = 1000  # Number of timesteps
 n_beacons = 6 # Number of beacons
-Q_weight = 0.25
+Q_weight = 0.5
 R_weight = 0.25
+rob_cov_init = 0.25
 
 # Init 
 beacons = []
@@ -49,7 +52,7 @@ beacon6 = beacon(1,2)
 beacons = [beacon1, beacon2, beacon3, beacon4, beacon5, beacon6]
 
 
-robot = robot(Q_weight)
+robot = robot(rob_cov_init)
 
 Q = Q_weight*np.eye(2) # Process noise covariance
 R = R_weight*np.eye(n_beacons) # Measurement noise covariance
@@ -105,6 +108,7 @@ for i in range(N):
     print("Measurement Jacobian: \n", H)
     print("Distance measurements: \n",z)
     print("Info vector: ",np.sum(np.absolute(info_vector)))
+    print("Robot covariance", robot.cov)
 
     # Store the information vector and position vector
     info_vectors[i] = info_vector.T
