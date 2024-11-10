@@ -42,7 +42,7 @@ class robot:
 
 # Parameters
 N = 1000  # Number of timesteps
-n_landmarks = 1 # Number of beacons
+n_landmarks = 1 # Number of landmarks
 Q_weight = 0.5
 R_weight = 0.25
 rob_cov_init = 0.25
@@ -85,7 +85,6 @@ for i in range(N):
     # Measurement update & calculate the information matrix and vector for the measurement
     # for j,landmark in enumerate(n_landmarks):
     H = robot.H(landmark)
-    # print(H)
     z = robot.z_measure(i, R_weight) # Based on the ground truth position of the robot with some noise
     actual_pos = robot.h(landmark) # Based on where the measurement model believes the robot is
 
