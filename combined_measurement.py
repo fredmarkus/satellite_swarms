@@ -34,11 +34,11 @@ class robot:
         return (self.pos_p - landmark.pos)/np.linalg.norm(self.pos_p - landmark.pos) # This provides a normalized vector (the bearing)
 
     def H_landmark(self, landmark):
-        coeff = 1/np.linalg.norm(self.pos_p - landmark.pos)
-        H11 = ((self.pos_p[0] - landmark.pos[0])**2)/(np.linalg.norm(self.pos_p - landmark.pos))**6 + 1
-        H12 = (self.pos_p[0] - landmark.pos[0])*(self.pos_p[1] - landmark.pos[1])/(np.linalg.norm(self.pos_p - landmark.pos)**6)
-        H22 = ((self.pos_p[1] - landmark.pos[1])**2)/(np.linalg.norm(self.pos_p - landmark.pos))**6 + 1
-        return coeff*np.array([[H11, H12],[H12, H22]])
+        # coeff = 1/np.linalg.norm(self.pos_p - landmark.pos)
+        H11 = (((self.pos_p[0] - landmark.pos[0])**2)/(np.linalg.norm(self.pos_p - landmark.pos))**3) + 1/np.linalg.norm(self.pos_p - landmark.pos)
+        H12 = (self.pos_p[0] - landmark.pos[0])*(self.pos_p[1] - landmark.pos[1])/(np.linalg.norm(self.pos_p - landmark.pos)**3)
+        H22 = (((self.pos_p[1] - landmark.pos[1])**2)/(np.linalg.norm(self.pos_p - landmark.pos))**3) + 1/np.linalg.norm(self.pos_p - landmark.pos)
+        return np.array([[H11, H12],[H12, H22]])
     
     def h_inter_range(self, sat_pos):
         return np.array([np.linalg.norm(self.pos_p - sat_pos)])
@@ -67,21 +67,21 @@ class robot:
     
     def true_new_pos(self):
         # The satellite dynamics are well known. We don't have process noise that could affect the calculated position
-        self.actual_pos = self.A@self.actual_pos #+ np.random.normal(loc=0,scale=self.Q_weight,size=(self.dim))
+        self.actual_pos = self.A@self.actual_pos #+ np.random.normal(loc=0,scale=math.sqrt(self.Q_weight),size=(self.dim))
 
 
     def measure_z_landmark(self, landmark):
-        vec = (self.actual_pos - landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(self.dim))
-        # print(f'landmark vector of sat{self.id} is: {vec}')
-        return vec/np.linalg.norm(self.actual_pos - landmark.pos)
+        vec = (self.pos_p - landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(self.dim))
+        return vec/np.linalg.norm(self.pos_p - landmark.pos)
         
 
     def measure_z_range(self, sats):
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
-                d = np.array([np.linalg.norm(self.actual_pos - sat.actual_pos)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
+                d = np.array([np.linalg.norm(self.pos_p - sat.pos_p)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                 z = np.append(z,d,axis=0)
+# TODO: CHECK IF THIS IS ACTUALLY CORRECT TO USE SAT.POS_P RATHER THAN SAT.POS_M OR USING A BELIEF STATE OF THE OTHER SATELLITES THAT WE COMMUNICATE
         # print(f'ranges of sat{self.id} is: {z}')
         return z
     
@@ -144,14 +144,13 @@ for i in range(N):
     # With updated priors, the satellites can now make measurement updates. 
     for sat in sats:
         H = sat.combined_H(landmark, sats)
-        K = sat.cov_p@H.T@np.linalg.inv(H@sat.cov_p@H.T + R)
+        K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R) # Regularization term in the inverse
 
         # Make the measurement
         z = sat.measure_z_combined(landmark, sats)
-        # print(f'z of sat{sat.id} is: {z}')
         sat.pos_m = sat.pos_p + K@(z - sat.h_combined(landmark, sats))
-        sat.cov_m = (np.eye(dim) - K@H)@sat.cov_p
-
+        sat.cov_m = (np.eye(dim) - K@H)@sat.cov_p@((np.eye(dim) - K@H).T)+ K@R@K.T #Joseph form; regular updated proved to be numerically unstable
+        
         # Update the information matrix and vector with measurements
         I_matrix = H.T@np.linalg.inv(R)@H
         I_vector = H.T@np.linalg.inv(R)@z
@@ -159,8 +158,8 @@ for i in range(N):
         sat.info_matrix = sat.info_matrix + I_matrix
         sat.info_vector = sat.info_vector + I_vector
 
-    # print(sat1.info_matrix)
-    print(sat1.info_matrix)
+    print(sat2.pos_m)
+
 
 
         #TODO: Implement plotting

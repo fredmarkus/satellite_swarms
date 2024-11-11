@@ -22,9 +22,9 @@ class robot:
     
     def H(self, landmark):
         coeff = 1/np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))
-        H11 = ((self.pos[0][0] - landmark.x)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]])))**6 + 1
+        H11 = ((self.pos[0][0] - landmark.x)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]])))**3 + 1
         H12 = (self.pos[0][0] - landmark.x)*(self.pos[1][0] - landmark.y)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]]))**6)
-        H22 = ((self.pos[1][0] - landmark.y)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]])))**6 + 1
+        H22 = ((self.pos[1][0] - landmark.y)**2)/(np.linalg.norm(self.pos - np.array([[landmark.x],[landmark.y]])))**3 + 1
         return coeff*np.array([[H11, H12],[H12, H22]])
     
     def z_measure(self, index, R_weight):
