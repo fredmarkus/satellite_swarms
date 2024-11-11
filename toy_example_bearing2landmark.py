@@ -4,6 +4,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 class landmark:
     def __init__(self, x, y):
@@ -32,7 +33,7 @@ class robot:
         else:
             current_position = np.array([[2],[0]])
 
-        current_position = current_position + np.random.normal(loc=0,scale=R_weight,size=(2,1))
+        current_position = current_position + np.random.normal(loc=0,scale=math.sqrt(R_weight),size=(2,1))
 
         return current_position/np.linalg.norm(current_position)
 

@@ -4,7 +4,7 @@
 # Right now we are considering purely the range measurements between the satellites but not really taking the dynamics into account in any meaningful way. 
 
 import numpy as np
-
+import math
 
 class landmark:
     def __init__(self, x, y):
@@ -13,22 +13,27 @@ class landmark:
 
 class robot:
 
-    def __init__(self, position, rob_cov_init, robot_id):
+    def __init__(self, position, rob_cov_init, robot_id, dim, meas_dim, Q_weight, R_weight):
         self.pos_m = np.array([position[0],position[1]])
         self.cov_m = rob_cov_init*np.eye(2)
+        self.id = robot_id # Unique identifier for the satellite
+        self.dim = dim
+        self.meas_dim = meas_dim
+        self.R_weight = R_weight # This is the variance weight for the measurement noise
+        self.Q_weight = Q_weight # This is the variance weight for the process noise
+
         self.actual_pos = np.array([position[0],position[1]])
         self.A = np.array([[0,1],[1,0]])
         self.info_matrix = np.linalg.inv(self.cov_m)
         self.info_vector = self.info_matrix@self.pos_m
         self.pos_p = self.pos_m # Initialize the prior vector exactly the same as the measurement vector
         self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
-        self.id = robot_id # Unique identifier for the satellite
 
 
-    def h_bearing(self, landmark):
+    def h_landmark(self, landmark):
         return (self.pos_p - landmark.pos)/np.linalg.norm(self.pos_p - landmark.pos) # This provides a normalized vector (the bearing)
 
-    def H_bearing(self, landmark):
+    def H_landmark(self, landmark):
         coeff = 1/np.linalg.norm(self.pos_p - landmark.pos)
         H11 = ((self.pos_p[0] - landmark.pos[0])**2)/(np.linalg.norm(self.pos_p - landmark.pos))**6 + 1
         H12 = (self.pos_p[0] - landmark.pos[0])*(self.pos_p[1] - landmark.pos[1])/(np.linalg.norm(self.pos_p - landmark.pos)**6)
@@ -44,7 +49,7 @@ class robot:
         return np.array([[dx, dy]])
     
     def h_combined(self, landmark, sats):
-        h = self.h_bearing(landmark)
+        h = self.h_landmark(landmark)
         for sat in sats:
             if sat.id != self.id:
                 h = np.append(h, self.h_inter_range(sat.pos_p),axis=0)
@@ -53,52 +58,71 @@ class robot:
 
     # This function combines the H matrices for the bearing and inter-satellite range measurements
     def combined_H(self, landmark, sats):
-        H = self.H_bearing(landmark)
+        H = self.H_landmark(landmark)
         for sat in sats:
             if sat.id != self.id:
                 H = np.vstack((H, self.H_inter_range(sat.pos_p)))
 
         return H
     
-    def true_new_pos(self, Q_weight):
-        self.actual_pos = self.A@self.actual_pos + np.random.normal(loc=0,scale=Q_weight,size=(2))
+    def true_new_pos(self):
+        # The satellite dynamics are well known. We don't have process noise that could affect the calculated position
+        self.actual_pos = self.A@self.actual_pos #+ np.random.normal(loc=0,scale=self.Q_weight,size=(self.dim))
 
 
     def measure_z_landmark(self, landmark):
-        return (self.actual_pos -landmark.pos)/np.linalg.norm(self.actual_pos - landmark.pos)
+        vec = (self.actual_pos - landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(self.dim))
+        # print(f'landmark vector of sat{self.id} is: {vec}')
+        return vec/np.linalg.norm(self.actual_pos - landmark.pos)
         
 
     def measure_z_range(self, sats):
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
-                z = np.append(z,np.array([np.linalg.norm(self.actual_pos - sat.actual_pos)]),axis=0)
-
+                d = np.array([np.linalg.norm(self.actual_pos - sat.actual_pos)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
+                z = np.append(z,d,axis=0)
+        # print(f'ranges of sat{self.id} is: {z}')
         return z
     
     def measure_z_combined(self, landmark, sats):
         z = self.measure_z_landmark(landmark) # Take bearing measurement
-        z = np.append(z, self.measure_z_range(sats),axis=0) # Append the range measurement
+        if len(sats) > 1:
+            z = np.append(z, self.measure_z_range(sats),axis=0) # Append the range measurement
 
         return z
 
 
 # Parameters
-N = 1000  # Number of timesteps
+N = 100  # Number of timesteps
 n_landmarks = 1 # Number of landmarks
 n_satellites = 1 # Number of satellites
-Q_weight = 0.1
-R_weight = 0.1
-rob_cov_init = 0.1
-dim = 2 #dimension of the space
+Q_weight = 0.01
+R_weight = 0.01
+rob_cov_init = 0.01
+dim = 2 #dimension of the state space
 meas_dim = dim + n_satellites # dimension is 1 bearing measurement that has dimension dim and n_satellites range measurements each with dimension 1 
 
 
 # Init 
-landmark = landmark(1,1)
+landmark = landmark(0,0)
 
-sat1 = robot([1,-1], rob_cov_init, 0)
-sat2 = robot([3,0], rob_cov_init, 1)
+sat1 = robot(position=[1,-1],
+             rob_cov_init=rob_cov_init,
+             robot_id=0, 
+             dim=dim, 
+             meas_dim=meas_dim,
+             Q_weight=Q_weight,
+             R_weight=R_weight)
+
+sat2 = robot(position=[3,0],
+             rob_cov_init=rob_cov_init,
+             robot_id=1,
+             dim=dim,
+             meas_dim=meas_dim,
+             Q_weight=Q_weight,
+             R_weight=R_weight)
+
 sats = [sat1, sat2]
 
 Q = Q_weight*np.eye(dim) # Process noise covariance
@@ -109,21 +133,22 @@ for i in range(N):
     # All satellites first need to make their prior position update before they all make their measurements
     for sat in sats:
         #Update the ground truth position of the satellite
-        sat.true_new_pos(Q_weight)
+        sat.true_new_pos()
         sat.pos_p = sat.A@sat.pos_m
-        sat.cov_p = sat.A@sat.cov_m@sat.A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
+        sat.cov_p = sat.A@sat.cov_m@sat.A.T #+ Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
         
         # Update the satellites information matrix and vector
         sat.info_matrix = np.linalg.inv(sat.cov_p)
         sat.info_vector = sat.info_matrix@sat.pos_p
 
-    # With updated priors, the robots can now make measurement updates. 
+    # With updated priors, the satellites can now make measurement updates. 
     for sat in sats:
         H = sat.combined_H(landmark, sats)
         K = sat.cov_p@H.T@np.linalg.inv(H@sat.cov_p@H.T + R)
 
         # Make the measurement
         z = sat.measure_z_combined(landmark, sats)
+        # print(f'z of sat{sat.id} is: {z}')
         sat.pos_m = sat.pos_p + K@(z - sat.h_combined(landmark, sats))
         sat.cov_m = (np.eye(dim) - K@H)@sat.cov_p
 
@@ -135,7 +160,7 @@ for i in range(N):
         sat.info_vector = sat.info_vector + I_vector
 
     # print(sat1.info_matrix)
-    print(sat1.actual_pos)
+    print(sat1.info_matrix)
 
 
         #TODO: Implement plotting
