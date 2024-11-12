@@ -22,7 +22,6 @@ class robot:
         self.R_weight = R_weight # This is the variance weight for the measurement noise
         self.Q_weight = Q_weight # This is the variance weight for the process noise
 
-        self.actual_pos = np.array([position[0],position[1]])
         self.A = np.array([[0,1],[1,0]])
         self.info_matrix = np.linalg.inv(self.cov_m)
         self.info_vector = self.info_matrix@self.pos_m
@@ -65,15 +64,10 @@ class robot:
 
         return H
     
-    def true_new_pos(self):
-        # The satellite dynamics are well known. We don't have process noise that could affect the calculated position
-        self.actual_pos = self.A@self.actual_pos #+ np.random.normal(loc=0,scale=math.sqrt(self.Q_weight),size=(self.dim))
-
 
     def measure_z_landmark(self, landmark):
         vec = (self.pos_p - landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(self.dim))
         return vec/np.linalg.norm(self.pos_p - landmark.pos)
-        
 
     def measure_z_range(self, sats):
         z = np.empty((0))
@@ -81,7 +75,6 @@ class robot:
             if sat.id != self.id:
                 d = np.array([np.linalg.norm(self.pos_p - sat.pos_p)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                 z = np.append(z,d,axis=0)
-# TODO: CHECK IF THIS IS ACTUALLY CORRECT TO USE SAT.POS_P RATHER THAN SAT.POS_M OR USING A BELIEF STATE OF THE OTHER SATELLITES THAT WE COMMUNICATE
         # print(f'ranges of sat{self.id} is: {z}')
         return z
     
@@ -158,8 +151,7 @@ for i in range(N):
         sat.info_matrix = sat.info_matrix + I_matrix
         sat.info_vector = sat.info_vector + I_vector
 
-    print(sat2.pos_m)
-
+        #Set up the problem as a nonlinear least square problem rather than 
 
 
         #TODO: Implement plotting
