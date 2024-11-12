@@ -45,7 +45,15 @@ class satellite:
         self.min_landmark = None # The closest current landmark
 
     # Helper function to determine closest landmark to the satellite at the current state position based on Euclidean distance
-    def closest_landmark(self, landmarks):
+    def closest_landmark(self, landmarks: list) -> object:
+        """
+        Find the closest landmark to the current position.
+        Args:
+            landmarks (list): A list of landmark objects, each having a 'pos' attribute.
+        Returns:
+            Landmark: The landmark object that is closest to the current position. 
+            If no landmarks are provided, returns None.
+        """
         min_dist = np.inf
         closest_landmark = None
 
@@ -60,24 +68,80 @@ class satellite:
         
         return closest_landmark
 
-    def h_landmark(self, landmarks):
+    def h_landmark(self, landmarks: list) -> np.ndarray:
+        """
+        Calculate the normalized vector (bearing) from the current position to the closest landmark.
+
+        Args:
+            landmarks (list): A list of landmark objects, each having a 'pos' attribute representing its position.
+
+        Returns:
+            numpy.ndarray: A normalized vector pointing from the current position to the closest landmark.
+        """
         min_landmark = self.closest_landmark(landmarks)
         return (self.curr_pos - min_landmark.pos)/np.linalg.norm(self.curr_pos - min_landmark.pos) # This provides a normalized vector (the bearing)
 
-    def H_landmark(self, landmark):
+    def H_landmark(self, landmark: object) -> np.ndarray:
+        """
+        Calculate the Hessian matrix of the landmark.
+
+        Parameters:
+        landmark (object): The landmark object which contains the position attribute 'pos'.
+
+        Returns:
+        numpy.ndarray: The Hessian matrix of the landmark with respect to the current position.
+        """
         return -(self.curr_pos - landmark.pos)@(self.curr_pos - landmark.pos).T/np.linalg.norm(self.curr_pos - landmark.pos)**3 + np.eye(self.dim/2)/np.linalg.norm(self.curr_pos - landmark.pos)
     
     
-    def h_inter_range(self, sat_pos):
+    def h_inter_range(self, sat_pos: np.ndarray) -> np.ndarray:
+        """
+        Calculate the Euclidean distance between the current position and a satellite position.
+
+        Parameters:
+        sat_pos (numpy.ndarray): The position of the satellite as a numpy array.
+
+        Returns:
+        numpy.ndarray: A numpy array containing the Euclidean distance.
+        """
         return np.array([np.linalg.norm(self.curr_pos - sat_pos)])
     
-    def H_inter_range(self, sat_pos):
+    def H_inter_range(self, sat_pos: np.ndarray) -> np.ndarray:
+        """
+        Calculate the partial derivatives of the range with respect to the satellite position.
+
+        This function computes the partial derivatives of the range (distance) between the current position
+        and the satellite position with respect to the satellite's x, y, and z coordinates.
+
+        Parameters:
+        sat_pos (numpy.ndarray): A 3-element array representing the satellite's position [x, y, z].
+
+        Returns:
+        numpy.ndarray: A 1x3 array containing the partial derivatives [dx, dy, dz].
+        """
         dx = (sat_pos[0] - self.curr_pos[0])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
         dy = (sat_pos[1] - self.curr_pos[1])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
         dz = (sat_pos[2] - self.curr_pos[2])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
         return np.array([[dx, dy, dz]])
     
-    def h_combined(self, landmarks, sats):
+    def h_combined(self, landmarks: list, sats: list) -> np.ndarray:
+        """
+        Compute the combined measurement vector for landmarks and satellites.
+
+        This function calculates the measurement vector `h` by first computing the 
+        landmark measurements using `self.h_landmark(landmarks)`. It then iterates 
+        through the provided satellites (`sats`) and appends the inter-satellite 
+        range measurements to `h` for each satellite that does not have the same 
+        ID as `self.id`.
+
+        Parameters:
+        landmarks (list): A list of landmark positions.
+        sats (list): A list of satellite objects, each with attributes `id` and `curr_pos`.
+
+        Returns:
+        numpy.ndarray: The combined measurement vector `h` for the given landmarks 
+        and satellites.
+        """
         h = self.h_landmark(landmarks)
         for sat in sats:
             if sat.id != self.id:
@@ -86,8 +150,18 @@ class satellite:
         return h
 
     # This function combines the H matrices for the bearing and inter-satellite range measurements
-    def combined_H(self, landmark, sats):
-        H = self.H_landmark(self.min_landmark)
+    def combined_H(self, landmark: object, sats: list) -> np.ndarray:
+        """
+        Computes the combined Jacobian matrix H for a given landmark and a list of satellites.
+
+        Args:
+            landmark (object): The landmark object for which the Jacobian is computed.
+            sats (list): A list of satellite objects.
+
+        Returns:
+            numpy.ndarray: The combined Jacobian matrix H.
+        """
+        H = self.H_landmark(landmark)
         for sat in sats:
             if sat.id != self.id:
                 H = np.vstack((H, self.H_inter_range(sat.curr_pos)))
@@ -95,7 +169,16 @@ class satellite:
         return H
     
 
-    def measure_z_landmark(self, landmarks):
+    def measure_z_landmark(self, landmarks: list) -> np.ndarray:
+        """
+        Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark.
+        Args:
+            landmarks (list): A list of landmark objects, each having a 'pos' attribute representing its position.
+        Returns:
+            numpy.ndarray: A vector representing the bearing to the closest landmark, with added noise.
+        Raises:
+            Exception: If no landmarks are found.
+        """
         # Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark
         min_landmark = self.closest_landmark(landmarks)
 
@@ -105,7 +188,24 @@ class satellite:
         vec = (self.curr_pos - min_landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(self.dim/2))
         return vec/np.linalg.norm(self.curr_pos - min_landmark.pos)
 
-    def measure_z_range(self, sats):
+    def measure_z_range(self, sats: list) -> np.ndarray:
+        """
+        Measures the range (distance) to a list of satellites.
+
+        For each satellite in the provided list, this method calculates the 
+        Euclidean distance from the current position of this object to the 
+        satellite's current position. It adds some Gaussian noise to the 
+        distance measurement to simulate real-world inaccuracies. The method 
+        excludes the satellite with the same ID as this object.
+
+        Args:
+            sats (list): A list of satellite objects, each having 'id' and 
+                         'curr_pos' attributes.
+
+        Returns:
+            numpy.ndarray: An array of measured distances to the satellites, 
+                           with added Gaussian noise.
+        """
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
@@ -114,7 +214,22 @@ class satellite:
                 z = np.append(z,d,axis=0)
         return z
     
-    def measure_z_combined(self, landmarks, sats):
+    def measure_z_combined(self, landmarks: list, sats: list) -> np.ndarray:
+        """
+        Measure the combined observation vector from landmarks and satellites.
+
+        This method first takes a bearing measurement to the closest landmark.
+        If there are multiple satellites, it appends the range measurements from the satellites
+        to the observation vector.
+
+        Args:
+            landmarks (list): A list of landmarks to measure.
+            sats (list): A list of satellites to measure.
+
+        Returns:
+            np.ndarray: The combined observation vector containing bearing measurements to the closest landmark
+                        and range measurements from the satellites.
+        """
         z = self.measure_z_landmark(landmarks) # Take bearing measurement to the closest landmark
         if len(sats) > 1:
             z = np.append(z, self.measure_z_range(sats),axis=0) # Append the range measurement
@@ -131,7 +246,22 @@ def euler_discretization(x, dt):
     return np.concatenate((r_new, v_new))
 
 
-def latlon2ecef(landmarks):
+def latlon2ecef(landmarks: list) -> np.ndarray:
+    """
+    Convert latitude, longitude, and altitude coordinates to Earth-Centered, Earth-Fixed (ECEF) coordinates.
+    Parameters:
+    landmarks (list of tuples): A list of tuples where each tuple contains:
+        - landmark[0] (any): An identifier for the landmark.
+        - landmark[1] (float): Latitude in radians.
+        - landmark[2] (float): Longitude in radians.
+        - landmark[3] (float): Altitude in kilometers.
+    Returns:
+    numpy.ndarray: A 2D array where each row corresponds to a landmark and contains:
+        - landmark[0] (any): The identifier for the landmark.
+        - X (float): The ECEF X coordinate in kilometers.
+        - Y (float): The ECEF Y coordinate in kilometers.
+        - Z (float): The ECEF Z coordinate in kilometers.
+    """
     ecef = np.array([])
     a = 6378.137
     b = 6356.7523
