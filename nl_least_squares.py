@@ -21,13 +21,55 @@ R_EARTH = 6378
 R_SAT = 550 + R_EARTH
 
 class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Check with Paulo or Zac if this is correct)
-    def __init__(self, x, y, z, name):
+    def __init__(self, x: float, y: float, z: float, name: str) -> None:
+        """
+        Initialize a new instance of the class.
+
+        Args:
+            x (float): The x-coordinate of the position.
+            y (float): The y-coordinate of the position.
+            z (float): The z-coordinate of the position.
+            name (str): The name associated with the position.
+
+        Returns:
+            None
+        """
         self.pos = np.array([x,y,z])
         self.name = name
 
 class satellite:
 
-    def __init__(self, state, rob_cov_init, robot_id, dim, meas_dim, Q_weight, R_weight):
+    def __init__(self, state: np.ndarray, rob_cov_init: float, robot_id: int, dim: int, meas_dim: int, Q_weight: float, R_weight: float) -> None:
+        """
+        Initializes the state and parameters for the non-linear least squares estimator.
+
+        Args:
+            state (np.ndarray): Initial state vector of the satellite.
+            rob_cov_init (float): Initial covariance value for the robot.
+            robot_id (int): Unique identifier for the satellite.
+            dim (int): State dimension of the satellite (e.g., 6 for 3 position + 3 velocity).
+            meas_dim (int): Dimension of the measurement vector.
+            Q_weight (float): Variance weight for the process noise.
+            R_weight (float): Variance weight for the measurement noise.
+
+        Attributes:
+            x_0 (np.ndarray): Initial state vector.
+            cov_m (np.ndarray): Initial covariance matrix.
+            id (int): Unique identifier for the satellite.
+            dim (int): State dimension of the satellite.
+            meas_dim (int): Dimension of the measurement vector.
+            R_weight (float): Variance weight for the measurement noise.
+            Q_weight (float): Variance weight for the process noise.
+            info_matrix (np.ndarray): Information matrix, inverse of the covariance matrix.
+            info_vector (np.ndarray): Information vector, product of the information matrix and initial state vector.
+            x_p (np.ndarray): Prior state vector, initialized to the initial state vector.
+            cov_p (np.ndarray): Prior covariance matrix, initialized to the initial covariance matrix.
+            curr_pos (np.ndarray): Current position of the satellite.
+            min_landmark (None): Placeholder for the closest current landmark.
+
+        Returns: 
+            None
+        """
         self.x_0 = state
         self.cov_m = rob_cov_init*np.eye(dim)
         self.id = robot_id # Unique identifier for the satellite
@@ -48,8 +90,10 @@ class satellite:
     def closest_landmark(self, landmarks: list) -> object:
         """
         Find the closest landmark to the current position.
+
         Args:
             landmarks (list): A list of landmark objects, each having a 'pos' attribute.
+
         Returns:
             Landmark: The landmark object that is closest to the current position. 
             If no landmarks are provided, returns None.
@@ -85,11 +129,11 @@ class satellite:
         """
         Calculate the Hessian matrix of the landmark.
 
-        Parameters:
-        landmark (object): The landmark object which contains the position attribute 'pos'.
+        Args:
+            landmark (object): The landmark object which contains the position attribute 'pos'.
 
         Returns:
-        numpy.ndarray: The Hessian matrix of the landmark with respect to the current position.
+            numpy.ndarray: The Hessian matrix of the landmark with respect to the current position.
         """
         return -(self.curr_pos - landmark.pos)@(self.curr_pos - landmark.pos).T/np.linalg.norm(self.curr_pos - landmark.pos)**3 + np.eye(self.dim/2)/np.linalg.norm(self.curr_pos - landmark.pos)
     
@@ -98,11 +142,11 @@ class satellite:
         """
         Calculate the Euclidean distance between the current position and a satellite position.
 
-        Parameters:
-        sat_pos (numpy.ndarray): The position of the satellite as a numpy array.
+        Args:
+            sat_pos (numpy.ndarray): The position of the satellite as a numpy array.
 
         Returns:
-        numpy.ndarray: A numpy array containing the Euclidean distance.
+            numpy.ndarray: A numpy array containing the Euclidean distance.
         """
         return np.array([np.linalg.norm(self.curr_pos - sat_pos)])
     
@@ -113,11 +157,11 @@ class satellite:
         This function computes the partial derivatives of the range (distance) between the current position
         and the satellite position with respect to the satellite's x, y, and z coordinates.
 
-        Parameters:
-        sat_pos (numpy.ndarray): A 3-element array representing the satellite's position [x, y, z].
+        Args:
+            sat_pos (numpy.ndarray): A 3-element array representing the satellite's position [x, y, z].
 
         Returns:
-        numpy.ndarray: A 1x3 array containing the partial derivatives [dx, dy, dz].
+            numpy.ndarray: A 1x3 array containing the partial derivatives [dx, dy, dz].
         """
         dx = (sat_pos[0] - self.curr_pos[0])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
         dy = (sat_pos[1] - self.curr_pos[1])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
@@ -134,13 +178,13 @@ class satellite:
         range measurements to `h` for each satellite that does not have the same 
         ID as `self.id`.
 
-        Parameters:
-        landmarks (list): A list of landmark positions.
-        sats (list): A list of satellite objects, each with attributes `id` and `curr_pos`.
+        Args:
+            landmarks (list): A list of landmark positions.
+            sats (list): A list of satellite objects, each with attributes `id` and `curr_pos`.
 
         Returns:
-        numpy.ndarray: The combined measurement vector `h` for the given landmarks 
-        and satellites.
+            numpy.ndarray: The combined measurement vector `h` for the given landmarks 
+            and satellites.
         """
         h = self.h_landmark(landmarks)
         for sat in sats:
@@ -172,6 +216,7 @@ class satellite:
     def measure_z_landmark(self, landmarks: list) -> np.ndarray:
         """
         Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark.
+
         Args:
             landmarks (list): A list of landmark objects, each having a 'pos' attribute representing its position.
         Returns:
@@ -238,7 +283,7 @@ class satellite:
 
 
 # Numerical solution of the dynamics using Euler's method TODO: Implement RK4
-def euler_discretization(x, dt):
+def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     r = x[0:3]
     v = x[3:6]
     r_new = r + v*dt
@@ -249,18 +294,19 @@ def euler_discretization(x, dt):
 def latlon2ecef(landmarks: list) -> np.ndarray:
     """
     Convert latitude, longitude, and altitude coordinates to Earth-Centered, Earth-Fixed (ECEF) coordinates.
-    Parameters:
-    landmarks (list of tuples): A list of tuples where each tuple contains:
-        - landmark[0] (any): An identifier for the landmark.
-        - landmark[1] (float): Latitude in radians.
-        - landmark[2] (float): Longitude in radians.
-        - landmark[3] (float): Altitude in kilometers.
+
+    Args:
+        landmarks (list of tuples): A list of tuples where each tuple contains:
+            - landmark[0] (any): An identifier for the landmark.
+            - landmark[1] (float): Latitude in radians.
+            - landmark[2] (float): Longitude in radians.
+            - landmark[3] (float): Altitude in kilometers.
     Returns:
-    numpy.ndarray: A 2D array where each row corresponds to a landmark and contains:
-        - landmark[0] (any): The identifier for the landmark.
-        - X (float): The ECEF X coordinate in kilometers.
-        - Y (float): The ECEF Y coordinate in kilometers.
-        - Z (float): The ECEF Z coordinate in kilometers.
+        numpy.ndarray: A 2D array where each row corresponds to a landmark and contains:
+            - landmark[0] (any): The identifier for the landmark.
+            - X (float): The ECEF X coordinate in kilometers.
+            - Y (float): The ECEF Y coordinate in kilometers.
+            - Z (float): The ECEF Z coordinate in kilometers.
     """
     ecef = np.array([])
     a = 6378.137
