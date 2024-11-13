@@ -1,12 +1,3 @@
-# This code considers the non-linear least square implementation of the problem described before
-# We now consider the dynamics  of an actual satellite flying in a polar orbit.
-
-#Simulate a polar orbit with a satellite that has states r and v where both are 3 dimensional vectors
-# Dynamics are given by: 
-# r_dot = v
-# v_dot = a = MU * r / ||r||^3
-# where r is the position vector, v is the velocity vector, a is the acceleration, and MU is the gravitational parameter
-
 # Satellite flies at an altitude of ca. 550km above the earth's surface
 # The earth's radius is 6378km and the gravitational parameter is 3.986004418 x 10^5 km^3/s^2
 
@@ -40,37 +31,7 @@ class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Chec
 
 class satellite:
 
-    def __init__(self, state: np.ndarray, rob_cov_init: float, robot_id: int, dim: int, meas_dim: int, Q_weight: float, R_weight: float) -> None:
-        """
-        Initializes the state and parameters for the non-linear least squares estimator.
-
-        Args:
-            state (np.ndarray): Initial state vector of the satellite.
-            rob_cov_init (float): Initial covariance value for the robot.
-            robot_id (int): Unique identifier for the satellite.
-            dim (int): State dimension of the satellite (e.g., 6 for 3 position + 3 velocity).
-            meas_dim (int): Dimension of the measurement vector.
-            Q_weight (float): Variance weight for the process noise.
-            R_weight (float): Variance weight for the measurement noise.
-
-        Attributes:
-            x_0 (np.ndarray): Initial state vector.
-            cov_m (np.ndarray): Initial covariance matrix.
-            id (int): Unique identifier for the satellite.
-            dim (int): State dimension of the satellite.
-            meas_dim (int): Dimension of the measurement vector.
-            R_weight (float): Variance weight for the measurement noise.
-            Q_weight (float): Variance weight for the process noise.
-            info_matrix (np.ndarray): Information matrix, inverse of the covariance matrix.
-            info_vector (np.ndarray): Information vector, product of the information matrix and initial state vector.
-            x_p (np.ndarray): Prior state vector, initialized to the initial state vector.
-            cov_p (np.ndarray): Prior covariance matrix, initialized to the initial covariance matrix.
-            curr_pos (np.ndarray): Current position of the satellite.
-            min_landmark (None): Placeholder for the closest current landmark.
-
-        Returns: 
-            None
-        """
+    def __init__(self, state: np.ndarray, rob_cov_init: float, robot_id: int, dim: int, meas_dim: int, Q_weight: float, R_weight: float, N: int, n_sats: int, landmarks: object) -> None:
         self.x_0 = state
         self.cov_m = rob_cov_init*np.eye(dim)
         self.id = robot_id # Unique identifier for the satellite
@@ -78,6 +39,9 @@ class satellite:
         self.meas_dim = meas_dim
         self.R_weight = R_weight # This is the variance weight for the measurement noise
         self.Q_weight = Q_weight # This is the variance weight for the process noise
+        self.N = N # Number of time steps
+        self.n_sats = n_sats # Number of satellites
+        self.landmarks = landmarks
 
         self.info_matrix = np.linalg.inv(self.cov_m)
         self.info_vector = self.info_matrix@self.x_0
@@ -85,21 +49,60 @@ class satellite:
         self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
 
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
-        self.min_landmark = None # The closest current landmark
+        self.other_sats_pos = np.ndarray(shape=(n_sats-1,3)) # Determines the current position of the other satellites
 
-    # Helper function to determine closest landmark to the satellite at the current state position based on Euclidean distance
-    def closest_landmark(self, landmarks: list) -> object:
-        """
-        Find the closest landmark to the current position.
+        # Gekko optimization variables
+        self.m = GEKKO(remote=False)
+        self.m.time = np.linspace(0, 1, 2) # Time vector
+        self.opt_state = self.m.Array(self.m.Var, (N, dim)) # State vector to be optimized
+        # self.y_est_landmark = [[self.m.Intermediate(self.h_landmark_gekko(self.opt_state,i,landmarks=self.landmarks)) for _ in range(meas_dim)] for i in range(N)]
+        # self.y_est_inter_range = [[self.m.Intermediate(self.h_inter_range_gekko(i, self.other_sats_pos[j,:])) for j in range(n_sats-1)] for i in range(N)]
+        # self.y_est_landmark = [[None]*3]*N
+        # self.y_est_landmark = self.y_est_landmark*meas_dim
+        # self.y_est_inter_range = [[None]*(n_sats-1)]*N
+        # self.y_est_inter_range = self.y_est_inter_range*(n_sats-1)
+        self.y_est = [[None]*meas_dim]*N
 
-        Args:
-            landmarks (list): A list of landmark objects, each having a 'pos' attribute.
+        print("Satellite initialized")
 
-        Returns:
-            Landmark: The landmark object that is closest to the current position. 
-            If no landmarks are provided, returns None.
-        """
-        min_dist = np.inf
+
+
+    # def h_landmark(self, landmarks: list) -> np.ndarray:
+    #     min_landmark = closest_landmark(self.curr_pos, landmarks)
+    #     return (self.curr_pos - min_landmark.pos)/np.linalg.norm(self.curr_pos - min_landmark.pos) # This provides a normalized vector (the bearing)
+
+    # def h_inter_range(self, sat_pos: np.ndarray) -> np.ndarray:
+    #     return np.array([np.linalg.norm(self.curr_pos - sat_pos)])
+
+    # def h_combined(self, landmarks: list, sats: list) -> np.ndarray:
+    #     h = self.h_landmark(landmarks)
+    #     for sat in sats:
+    #         if sat.id != self.id:
+    #             h = np.append(h, self.h_inter_range(sat.curr_pos),axis=0)
+
+    #     return h
+    
+    # def H_landmark(self, landmark: object) -> np.ndarray:
+    #     return -(self.curr_pos - landmark.pos)@(self.curr_pos - landmark.pos).T/np.linalg.norm(self.curr_pos - landmark.pos)**3 + np.eye(self.dim/2)/np.linalg.norm(self.curr_pos - landmark.pos)
+    
+    # def H_inter_range(self, sat_pos: np.ndarray) -> np.ndarray:
+    #     dx = (sat_pos[0] - self.curr_pos[0])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
+    #     dy = (sat_pos[1] - self.curr_pos[1])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
+    #     dz = (sat_pos[2] - self.curr_pos[2])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
+    #     return np.array([[dx, dy, dz]])
+
+    # # This function combines the H matrices for the bearing and inter-satellite range measurements
+    # def combined_H(self, landmark: object, sats: list) -> np.ndarray:
+    #     H = self.H_landmark(landmark)
+    #     for sat in sats:
+    #         if sat.id != self.id:
+    #             H = np.vstack((H, self.H_inter_range(sat.curr_pos)))
+
+    #     return H
+    
+
+    def closest_landmark_gekko(self, landmarks: list):
+        min_dist = math.inf
         closest_landmark = None
 
         for landmark in landmarks:
@@ -107,126 +110,34 @@ class satellite:
             if dist < min_dist:
                 min_dist = dist
                 closest_landmark = landmark
-                
-        if closest_landmark is not None:
-            self.min_landmark = closest_landmark
-        
+
         return closest_landmark
 
-    def h_landmark(self, landmarks: list) -> np.ndarray:
-        """
-        Calculate the normalized vector (bearing) from the current position to the closest landmark.
+    # def h_combined_gekko(self, index: int, landmarks: list, sats: list):
+    #     h = self.m.Array(self.m.Var, (self.meas_dim))
+    #     h[0:3] = self.h_landmark_gekko(index, landmarks)
+    #     k = 0
+    #     for sat in sats:
+    #         if sat.id != self.id:
+    #             tmp = self.h_inter_range_gekko(index, sat.curr_pos)
+    #             h[k+3] = tmp # 3 dimensions are already taken up by the bearing measurement
+    #             k += 1
+        
+    #     return h
 
-        Args:
-            landmarks (list): A list of landmark objects, each having a 'pos' attribute representing its position.
-
-        Returns:
-            numpy.ndarray: A normalized vector pointing from the current position to the closest landmark.
-        """
-        min_landmark = self.closest_landmark(landmarks)
-        return (self.curr_pos - min_landmark.pos)/np.linalg.norm(self.curr_pos - min_landmark.pos) # This provides a normalized vector (the bearing)
-
-    def H_landmark(self, landmark: object) -> np.ndarray:
-        """
-        Calculate the Hessian matrix of the landmark.
-
-        Args:
-            landmark (object): The landmark object which contains the position attribute 'pos'.
-
-        Returns:
-            numpy.ndarray: The Hessian matrix of the landmark with respect to the current position.
-        """
-        return -(self.curr_pos - landmark.pos)@(self.curr_pos - landmark.pos).T/np.linalg.norm(self.curr_pos - landmark.pos)**3 + np.eye(self.dim/2)/np.linalg.norm(self.curr_pos - landmark.pos)
+    def h_landmark_gekko(self, opt_state, i: int, landmarks: list):
+        min_landmark = self.closest_landmark_gekko(landmarks)
+        norm = self.m.sqrt((opt_state[i, 0] - min_landmark.pos[0])**2 + (opt_state[i, 1] - min_landmark.pos[1])**2 + (opt_state[i, 2] - min_landmark.pos[2])**2)
+        return (opt_state[i,0:3] - min_landmark.pos)/norm # TODO: Check if this subtraction between a np array and a gekko array works
     
-    
-    def h_inter_range(self, sat_pos: np.ndarray) -> np.ndarray:
-        """
-        Calculate the Euclidean distance between the current position and a satellite position.
+    def h_inter_range_gekko(self, i, sat_pos): # This function calculates the range measurement between the satellite and another satellite
+        norm = self.m.sqrt((self.opt_state[i, 0] - sat_pos[0])**2 + (self.opt_state[i, 1] - sat_pos[1])**2 + (self.opt_state[i, 2] - sat_pos[2])**2)
+        return norm
 
-        Args:
-            sat_pos (numpy.ndarray): The position of the satellite as a numpy array.
-
-        Returns:
-            numpy.ndarray: A numpy array containing the Euclidean distance.
-        """
-        return np.array([np.linalg.norm(self.curr_pos - sat_pos)])
-    
-    def H_inter_range(self, sat_pos: np.ndarray) -> np.ndarray:
-        """
-        Calculate the partial derivatives of the range with respect to the satellite position.
-
-        This function computes the partial derivatives of the range (distance) between the current position
-        and the satellite position with respect to the satellite's x, y, and z coordinates.
-
-        Args:
-            sat_pos (numpy.ndarray): A 3-element array representing the satellite's position [x, y, z].
-
-        Returns:
-            numpy.ndarray: A 1x3 array containing the partial derivatives [dx, dy, dz].
-        """
-        dx = (sat_pos[0] - self.curr_pos[0])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
-        dy = (sat_pos[1] - self.curr_pos[1])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
-        dz = (sat_pos[2] - self.curr_pos[2])/np.linalg.norm(self.curr_pos[0:3] - sat_pos)
-        return np.array([[dx, dy, dz]])
-    
-    def h_combined(self, landmarks: list, sats: list) -> np.ndarray:
-        """
-        Compute the combined measurement vector for landmarks and satellites.
-
-        This function calculates the measurement vector `h` by first computing the 
-        landmark measurements using `self.h_landmark(landmarks)`. It then iterates 
-        through the provided satellites (`sats`) and appends the inter-satellite 
-        range measurements to `h` for each satellite that does not have the same 
-        ID as `self.id`.
-
-        Args:
-            landmarks (list): A list of landmark positions.
-            sats (list): A list of satellite objects, each with attributes `id` and `curr_pos`.
-
-        Returns:
-            numpy.ndarray: The combined measurement vector `h` for the given landmarks 
-            and satellites.
-        """
-        h = self.h_landmark(landmarks)
-        for sat in sats:
-            if sat.id != self.id:
-                h = np.append(h, self.h_inter_range(sat.curr_pos),axis=0)
-
-        return h
-
-    # This function combines the H matrices for the bearing and inter-satellite range measurements
-    def combined_H(self, landmark: object, sats: list) -> np.ndarray:
-        """
-        Computes the combined Jacobian matrix H for a given landmark and a list of satellites.
-
-        Args:
-            landmark (object): The landmark object for which the Jacobian is computed.
-            sats (list): A list of satellite objects.
-
-        Returns:
-            numpy.ndarray: The combined Jacobian matrix H.
-        """
-        H = self.H_landmark(landmark)
-        for sat in sats:
-            if sat.id != self.id:
-                H = np.vstack((H, self.H_inter_range(sat.curr_pos)))
-
-        return H
-    
 
     def measure_z_landmark(self, landmarks: list) -> np.ndarray:
-        """
-        Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark.
-
-        Args:
-            landmarks (list): A list of landmark objects, each having a 'pos' attribute representing its position.
-        Returns:
-            numpy.ndarray: A vector representing the bearing to the closest landmark, with added noise.
-        Raises:
-            Exception: If no landmarks are found.
-        """
         # Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark
-        min_landmark = self.closest_landmark(landmarks)
+        min_landmark = closest_landmark(self.curr_pos, landmarks)
 
         if min_landmark is None:
             raise Exception("No landmarks found")
@@ -235,23 +146,6 @@ class satellite:
         return vec/np.linalg.norm(self.curr_pos - min_landmark.pos)
 
     def measure_z_range(self, sats: list) -> np.ndarray:
-        """
-        Measures the range (distance) to a list of satellites.
-
-        For each satellite in the provided list, this method calculates the 
-        Euclidean distance from the current position of this object to the 
-        satellite's current position. It adds some Gaussian noise to the 
-        distance measurement to simulate real-world inaccuracies. The method 
-        excludes the satellite with the same ID as this object.
-
-        Args:
-            sats (list): A list of satellite objects, each having 'id' and 
-                         'curr_pos' attributes.
-
-        Returns:
-            numpy.ndarray: An array of measured distances to the satellites, 
-                           with added Gaussian noise.
-        """
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
@@ -261,21 +155,6 @@ class satellite:
         return z
     
     def measure_z_combined(self, landmarks: list, sats: list) -> np.ndarray:
-        """
-        Measure the combined observation vector from landmarks and satellites.
-
-        This method first takes a bearing measurement to the closest landmark.
-        If there are multiple satellites, it appends the range measurements from the satellites
-        to the observation vector.
-
-        Args:
-            landmarks (list): A list of landmarks to measure.
-            sats (list): A list of satellites to measure.
-
-        Returns:
-            np.ndarray: The combined observation vector containing bearing measurements to the closest landmark
-                        and range measurements from the satellites.
-        """
         z = self.measure_z_landmark(landmarks) # Take bearing measurement to the closest landmark
         if len(sats) > 1:
             z = np.append(z, self.measure_z_range(sats),axis=0) # Append the range measurement
@@ -283,12 +162,73 @@ class satellite:
         return z
 
 
-# Numerical solution of the dynamics using Euler's method TODO: Implement RK4
+# Helper function to determine closest landmark to the satellite at the current state position based on Euclidean distance
+def closest_landmark(pos, landmarks: list) -> object:
+    """
+    Find the closest landmark to the current position.
+
+    Args:
+        pos (np.ndarray): The current position of the satellite.
+        landmarks (list): A list of landmark objects, each having a 'pos' attribute.
+
+    Returns:
+        Landmark: The landmark object that is closest to the current position. 
+        If no landmarks are provided, returns None.
+    """
+    min_dist = np.inf
+    closest_landmark = None
+
+    for landmark in landmarks:
+        dist = np.linalg.norm(np.array(pos) - landmark.pos)
+        if dist < min_dist:
+            min_dist = dist
+            closest_landmark = landmark
+
+    return closest_landmark
+
+
+# Numerical solution of the dynamics using Euler's method
 def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     r = x[0:3]
     v = x[3:6]
     r_new = r + v*dt
     v_new = v + (-MU/(np.linalg.norm(r)**3))*r*dt
+    return np.concatenate((r_new, v_new))
+
+# Numerical solution using RK4 method
+def rk4_discretization(x: np.ndarray, dt: float) -> np.ndarray:
+    r = x[0:3]
+    v = x[3:6]
+
+    def dr_dt(v):
+        """Derivative of r with respect to time is velocity v."""
+        return v
+
+    def dv_dt(r):
+        """Derivative of v with respect to time is gravitational acceleration."""
+        return (-MU / (np.linalg.norm(r)**3)) * r
+
+    # Calculate k1 for r and v
+    k1_r = dr_dt(v)
+    k1_v = dv_dt(r)
+
+    # Calculate k2 for r and v
+    k2_r = dr_dt(v + 0.5 * dt * k1_v)
+    k2_v = dv_dt(r + 0.5 * dt * k1_r)
+
+    # Calculate k3 for r and v
+    k3_r = dr_dt(v + 0.5 * dt * k2_v)
+    k3_v = dv_dt(r + 0.5 * dt * k2_r)
+
+    # Calculate k4 for r and v
+    k4_r = dr_dt(v + dt * k3_v)
+    k4_v = dv_dt(r + dt * k3_r)
+
+    # Combine the k terms to get the next position and velocity
+    r_new = r + (dt / 6) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
+    v_new = v + (dt / 6) * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
+
+    # Return the updated state vector
     return np.concatenate((r_new, v_new))
 
 
@@ -328,40 +268,15 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
 
 
 # Parameters
-N = 1000
+N = 2
 n_sats = 2
 f = 1 # Hz
 dt = 1/f
 meas_dim = n_sats-1 + 3 # 1 bearing measurements that have dimension 3 and n_sats-1 range measurements each with dimension 1 (no measurement to yourself)
 R_weight = 0.25
 R = R_weight*np.eye(meas_dim)
-
-
-### Satellite Initialization ###
-x00 = np.array([R_SAT, 0, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
-x01 = np.array([0, R_SAT, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
-
-sat0 = satellite(
-    state=x00,
-    rob_cov_init=0.25,
-    robot_id=0,
-    dim=6,
-    meas_dim=meas_dim,
-    R_weight=R_weight,
-    Q_weight=0.25
-)
-
-sat1 = satellite(
-    state=x01,
-    rob_cov_init=0.25,
-    robot_id=1,
-    dim=6,
-    meas_dim=meas_dim,
-    R_weight=R_weight,
-    Q_weight=0.25
-)
-
-sats = [sat0, sat1]
+state_dim = 6
+bearing_dim = 3
 
 
 ### Landmark Initialization ###
@@ -380,9 +295,42 @@ landmark_objects = []
 for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
+### Satellite Initialization ###
+x00 = np.array([R_SAT, 0, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
+x01 = np.array([0, R_SAT, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
+
+sat0 = satellite(
+    state=x00,
+    rob_cov_init=0.25,
+    robot_id=0,
+    dim=6,
+    meas_dim=meas_dim,
+    R_weight=R_weight,
+    Q_weight=0.25,
+    N=N,
+    n_sats=n_sats,
+    landmarks=landmark_objects
+)
+
+sat1 = satellite(
+    state=x01,
+    rob_cov_init=0.25,
+    robot_id=1,
+    dim=6,
+    meas_dim=meas_dim,
+    R_weight=R_weight,
+    Q_weight=0.25,
+    N=N,
+    n_sats=n_sats,
+    landmarks=landmark_objects
+
+)
+
+sats = [sat0, sat1]
+
+
 
 '''
-TODO: Place everything in the GEKKO solver to get nonlinear least squares solution for states. Consider the best version of the problem to use. (Consider the numerically advantageous option that uses the Cholesky decomposition.)
 TODO: Scale this to multiple satellites and landmarks
 '''
 
@@ -392,52 +340,83 @@ x_traj = np.zeros((N, 6, n_sats)) # Discretized trajectory of satellite states o
 for sat in sats:
     x = sat.x_0
     for i in range(N):
-        x = euler_discretization(x, dt) # Euler discretization of satellite state dynamics
+        x = rk4_discretization(x,dt) # RK4 discretization of satellite state dynamics
         x_traj[i,:,sat.id] = x  # Store the trajectory of the satellite states
 
 y = np.zeros((N, meas_dim, n_sats)) # Measurements for each satellite over the time period
-y_est = np.zeros((N, meas_dim, n_sats)) # Estimated measurements for each satellite over the time period
 
 for i in range(N):
 
     for sat in sats:
-        sat.curr_pos = x_traj[i,:,sat.id][0:3] # Update the current position of all satellites for the current measurement
+        sat.curr_pos = x_traj[i,:,sat.id][0:3] # Update the current position of all satellites for the current measurement batch
 
     for sat in sats:
         y[i,:,sat.id] = sat.measure_z_combined(landmark_objects, sats) # Generate the faked measurements for each satellite
-        y_est[i,:,sat.id] = sat.h_combined(landmark_objects, sats) # Generate the estimated measurements for each satellite
 
-# Now we have the measurements and the estimated measurements for each satellite over the time period
+        for j in range(bearing_dim):
+            # print(sat.y_est_landmark[i][j])
+            # sat.y_est_landmark[i][j] = sat.m.Intermediate(sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)[j]) # Generate bearing measurements element by element for each satellite
+            # sat.m.Equation(sat.y_est_landmark[i][j] == sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)[j]) # Generate bearing measurements element by element for each satellite
+            sat.y_est[i][j] = sat.m.Intermediate(sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)[j]) # Generate bearing measurements element by element for each satellite
+
+        k = 0
+        for other_sat in sats:
+            if other_sat.id != sat.id:
+                # sat.y_est_inter_range[i][k] = sat.m.Intermediate(sat.h_inter_range_gekko(i, other_sat.curr_pos)) # Generate range measurements element by element for each satellite
+                # sat.m.Equation(sat.y_est_inter_range[i][k] == sat.h_inter_range_gekko(i, other_sat.curr_pos))
+                sat.y_est[i][k+bearing_dim] = sat.m.Intermediate(sat.h_inter_range_gekko(i, other_sat.curr_pos)) 
+                k += 1
+
 # We can now use GEKKO to solve the nonlinear least squares problem
+
 for sat in sats:
 
     print(f"SOLVING FOR SATELLITE {sat.id}")
-    m = GEKKO(remote=False)
-    r_x = m.Var(value = sat.x_0[0])
-    r_y = m.Var(value = sat.x_0[1])
-    r_z = m.Var(value = sat.x_0[2])
-    v_x = m.Var(value = sat.x_0[3])
-    v_y = m.Var(value = sat.x_0[4])
-    v_z = m.Var(value = sat.x_0[5])
+    # m = GEKKO(remote=False)
 
-    # Define time horizon
-    m.time = np.linspace(0, N*dt, N)
+    for i in range(N):
+        sat.m.Equation(sat.opt_state[i,0].dt() == sat.opt_state[i,3])
+        sat.m.Equation(sat.opt_state[i,1].dt() == sat.opt_state[i,4])
+        sat.m.Equation(sat.opt_state[i,2].dt() == sat.opt_state[i,5])
+        sat.m.Equation(sat.opt_state[i,3].dt() == -MU*sat.opt_state[i,0]/(sat.opt_state[i,0]**2 + sat.opt_state[i,1]**2 + sat.opt_state[i,2]**2)**1.5)
+        sat.m.Equation(sat.opt_state[i,4].dt() == -MU*sat.opt_state[i,1]/(sat.opt_state[i,0]**2 + sat.opt_state[i,1]**2 + sat.opt_state[i,2]**2)**1.5)
+        sat.m.Equation(sat.opt_state[i,5].dt() == -MU*sat.opt_state[i,2]/(sat.opt_state[i,0]**2 + sat.opt_state[i,1]**2 + sat.opt_state[i,2]**2)**1.5)
+    
+        # Set initial conditions
+        sat.m.Equation(sat.opt_state[i,0] == x_traj[i,0,sat.id])
+        sat.m.Equation(sat.opt_state[i,1] == x_traj[i,1,sat.id])
+        sat.m.Equation(sat.opt_state[i,2] == x_traj[i,2,sat.id])
+        sat.m.Equation(sat.opt_state[i,3] == x_traj[i,3,sat.id])
+        sat.m.Equation(sat.opt_state[i,4] == x_traj[i,4,sat.id])
+        sat.m.Equation(sat.opt_state[i,5] == x_traj[i,5,sat.id])
+    
+    objective = 0
+    for i in range(N):
+        # for j in range(bearing_dim):
+        #     diff = y[i,j,sat.id] - sat.y_est_landmark[i][j]
+        #     objective += (diff*diff)*(1/R[j,j])
 
-    m.Equation(r_x.dt() == v_x)
-    m.Equation(r_y.dt() == v_y)
-    m.Equation(r_z.dt() == v_z)
-    m.Equation(v_x.dt() == -MU*r_x/(r_x**2 + r_y**2 + r_z**2)**1.5)
-    m.Equation(v_y.dt() == -MU*r_y/(r_x**2 + r_y**2 + r_z**2)**1.5)
-    m.Equation(v_z.dt() == -MU*r_z/(r_x**2 + r_y**2 + r_z**2)**1.5)
-    m.Minimize(sum((y[i,:,sat.id] - y_est[i,:,sat.id]).T@np.linalg.inv(R)@(y[i,:,sat.id] - y_est[i,:,sat.id]) for i in range(N)))
-    m.solve(disp=True)
+        # for j in range(n_sats-1):
+        #     diff = y[i,j+bearing_dim,sat.id] - sat.y_est_inter_range[i][j]
+        #     objective += (diff * diff)*(1/R[j+bearing_dim,j+bearing_dim])
 
-    print("r_x:", r_x.value)
-    print("r_y:", r_y.value)
-    print("r_z:", r_z.value)
-    print("v_x:", v_x.value)
-    print("v_y:", v_y.value)
-    print("v_z:", v_z.value)
+
+        diff = (y[i,:,sat.id] - sat.y_est[i][:])
+        objective += (diff.T @ np.linalg.inv(R) @ diff)
+
+    sat.m.Minimize(objective)
+
+    # sat.m.Minimize(sum((y[i,:,sat.id] - sat.y_est[i,:]).T@np.linalg.inv(R)@(y[i,:,sat.id] - sat.y_est[i,:]) for i in range(N)))
+    sat.m.solve(disp=True)
+
+    # print("r_x:", r_x.value)
+    # print("r_y:", r_y.value)
+    # print("r_z:", r_z.value)
+    # print("v_x:", v_x.value)
+    # print("v_y:", v_y.value)
+    # print("v_z:", v_z.value)
+
+    print("done")
     
 
 # The earth landmarks are in ECEF coordinates. We will make the assumption for now that only the closest landmark is used for the bearing measurement.
