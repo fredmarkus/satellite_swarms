@@ -14,6 +14,7 @@ from gekko import GEKKO
 import numpy as np
 import math
 import csv
+import matplotlib.pyplot as plt
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2
@@ -230,7 +231,7 @@ class satellite:
         if min_landmark is None:
             raise Exception("No landmarks found")
         
-        vec = (self.curr_pos - min_landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(self.dim/2))
+        vec = (self.curr_pos - min_landmark.pos) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
         return vec/np.linalg.norm(self.curr_pos - min_landmark.pos)
 
     def measure_z_range(self, sats: list) -> np.ndarray:
@@ -331,7 +332,9 @@ N = 1000
 n_sats = 2
 f = 1 # Hz
 dt = 1/f
-meas_dim = n_sats + 3 # 1 bearing measurement that has dimension 3 and n_sats range measurements each with dimension 1
+meas_dim = n_sats-1 + 3 # 1 bearing measurements that have dimension 3 and n_sats-1 range measurements each with dimension 1 (no measurement to yourself)
+R_weight = 0.25
+R = R_weight*np.eye(meas_dim)
 
 
 ### Satellite Initialization ###
@@ -344,7 +347,7 @@ sat0 = satellite(
     robot_id=0,
     dim=6,
     meas_dim=meas_dim,
-    R_weight=0.25,
+    R_weight=R_weight,
     Q_weight=0.25
 )
 
@@ -354,7 +357,7 @@ sat1 = satellite(
     robot_id=1,
     dim=6,
     meas_dim=meas_dim,
-    R_weight=0.25,
+    R_weight=R_weight,
     Q_weight=0.25
 )
 
@@ -383,7 +386,7 @@ TODO: Place everything in the GEKKO solver to get nonlinear least squares soluti
 TODO: Scale this to multiple satellites and landmarks
 '''
 
-t = np.linspace(0, N*dt, N) # Time vector
+# t = np.linspace(0, N*dt, N) # Time vector
 x_traj = np.zeros((N, 6, n_sats)) # Discretized trajectory of satellite states over time period 
 
 for sat in sats:
@@ -406,9 +409,36 @@ for i in range(N):
 
 # Now we have the measurements and the estimated measurements for each satellite over the time period
 # We can now use GEKKO to solve the nonlinear least squares problem
+for sat in sats:
 
+    print(f"SOLVING FOR SATELLITE {sat.id}")
+    m = GEKKO(remote=False)
+    r_x = m.Var(value = sat.x_0[0])
+    r_y = m.Var(value = sat.x_0[1])
+    r_z = m.Var(value = sat.x_0[2])
+    v_x = m.Var(value = sat.x_0[3])
+    v_y = m.Var(value = sat.x_0[4])
+    v_z = m.Var(value = sat.x_0[5])
 
+    # Define time horizon
+    m.time = np.linspace(0, N*dt, N)
 
+    m.Equation(r_x.dt() == v_x)
+    m.Equation(r_y.dt() == v_y)
+    m.Equation(r_z.dt() == v_z)
+    m.Equation(v_x.dt() == -MU*r_x/(r_x**2 + r_y**2 + r_z**2)**1.5)
+    m.Equation(v_y.dt() == -MU*r_y/(r_x**2 + r_y**2 + r_z**2)**1.5)
+    m.Equation(v_z.dt() == -MU*r_z/(r_x**2 + r_y**2 + r_z**2)**1.5)
+    m.Minimize(sum((y[i,:,sat.id] - y_est[i,:,sat.id]).T@np.linalg.inv(R)@(y[i,:,sat.id] - y_est[i,:,sat.id]) for i in range(N)))
+    m.solve(disp=True)
+
+    print("r_x:", r_x.value)
+    print("r_y:", r_y.value)
+    print("r_z:", r_z.value)
+    print("v_x:", v_x.value)
+    print("v_y:", v_y.value)
+    print("v_z:", v_z.value)
+    
 
 # The earth landmarks are in ECEF coordinates. We will make the assumption for now that only the closest landmark is used for the bearing measurement.
 # So calculate distance to all landmarks and then choose the closest one and calculate bearing to that.
