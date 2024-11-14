@@ -36,18 +36,7 @@ class satellite:
         self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
         self.other_sats_pos = np.ndarray(shape=(N,3,n_sats-1)) # Provides the position of the other satellites for all N timesteps
-
-        # Gekko optimization variables
-        # self.m = GEKKO(remote=False)
-        # self.m.time = np.linspace(0, N, N) # Time vector
-        # self.m.options.IMODE = 5
-        # self.opt_state = self.m.Array(self.m.Var, (N, dim)) # State vector to be optimized
-        # self.y_est = [[None]*meas_dim]*N
     
-    def h_inter_range_gekko(self, i, sat_pos): # This function calculates the range measurement between the satellite and another satellite
-        norm = self.m.sqrt((self.opt_state[i, 0] - sat_pos[0])**2 + (self.opt_state[i, 1] - sat_pos[1])**2 + (self.opt_state[i, 2] - sat_pos[2])**2)
-        return norm
-
     def measure_z_range(self, sats: list) -> np.ndarray:
         z = np.empty((0))
         for sat in sats:
