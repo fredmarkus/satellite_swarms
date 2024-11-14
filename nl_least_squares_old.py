@@ -14,18 +14,6 @@ R_SAT = 550 + R_EARTH
 
 class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Check with Paulo or Zac if this is correct)
     def __init__(self, x: float, y: float, z: float, name: str) -> None:
-        """
-        Initialize a new instance of the class.
-
-        Args:
-            x (float): The x-coordinate of the position.
-            y (float): The y-coordinate of the position.
-            z (float): The z-coordinate of the position.
-            name (str): The name associated with the position.
-
-        Returns:
-            None
-        """
         self.pos = np.array([x,y,z])
         self.name = name
 
@@ -53,7 +41,9 @@ class satellite:
 
         # Gekko optimization variables
         self.m = GEKKO(remote=False)
-        self.m.time = np.linspace(0, 1, 2) # Time vector
+        # self.m.time = np.linspace(0, 1, 2) # Time vector
+        self.m.time = np.linspace(0, N, N) # Time vector
+        self.m.options.IMODE = 5
         self.opt_state = self.m.Array(self.m.Var, (N, dim)) # State vector to be optimized
         # self.y_est_landmark = [[self.m.Intermediate(self.h_landmark_gekko(self.opt_state,i,landmarks=self.landmarks)) for _ in range(meas_dim)] for i in range(N)]
         # self.y_est_inter_range = [[self.m.Intermediate(self.h_inter_range_gekko(i, self.other_sats_pos[j,:])) for j in range(n_sats-1)] for i in range(N)]
@@ -62,8 +52,6 @@ class satellite:
         # self.y_est_inter_range = [[None]*(n_sats-1)]*N
         # self.y_est_inter_range = self.y_est_inter_range*(n_sats-1)
         self.y_est = [[None]*meas_dim]*N
-
-        print("Satellite initialized")
 
 
 
@@ -270,13 +258,13 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
 # Parameters
 N = 3
 n_sats = 2
+bearing_dim = 3
 f = 1 # Hz
 dt = 1/f
-meas_dim = n_sats-1 + 3 # 1 bearing measurements that have dimension 3 and n_sats-1 range measurements each with dimension 1 (no measurement to yourself)
+meas_dim = n_sats-1 + bearing_dim # 1 bearing measurement that has dimension 3 and n_sats-1 range measurements each with dimension 1 (no measurement to yourself)
 R_weight = 0.25
 R = R_weight*np.eye(meas_dim)
 state_dim = 6
-bearing_dim = 3
 
 
 ### Landmark Initialization ###
@@ -382,6 +370,7 @@ for sat in sats:
     # Set initial conditions
     for i in range(state_dim):
         sat.opt_state[0,i].value = x_traj[0,i,sat.id]
+        
     
     objective = 0
     for i in range(N):
