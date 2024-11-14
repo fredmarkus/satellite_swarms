@@ -268,7 +268,7 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
 
 
 # Parameters
-N = 2
+N = 3
 n_sats = 2
 f = 1 # Hz
 dt = 1/f
@@ -329,11 +329,6 @@ sat1 = satellite(
 sats = [sat0, sat1]
 
 
-
-'''
-TODO: Scale this to multiple satellites and landmarks
-'''
-
 # t = np.linspace(0, N*dt, N) # Time vector
 x_traj = np.zeros((N, 6, n_sats)) # Discretized trajectory of satellite states over time period 
 
@@ -357,8 +352,10 @@ for i in range(N):
             # print(sat.y_est_landmark[i][j])
             # sat.y_est_landmark[i][j] = sat.m.Intermediate(sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)[j]) # Generate bearing measurements element by element for each satellite
             # sat.m.Equation(sat.y_est_landmark[i][j] == sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)[j]) # Generate bearing measurements element by element for each satellite
+            # tmp = sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)
+            # print(tmp)
             sat.y_est[i][j] = sat.m.Intermediate(sat.h_landmark_gekko(sat.opt_state, i,landmark_objects)[j]) # Generate bearing measurements element by element for each satellite
-
+            
         k = 0
         for other_sat in sats:
             if other_sat.id != sat.id:
@@ -382,23 +379,19 @@ for sat in sats:
         sat.m.Equation(sat.opt_state[i,4].dt() == -MU*sat.opt_state[i,1]/(sat.opt_state[i,0]**2 + sat.opt_state[i,1]**2 + sat.opt_state[i,2]**2)**1.5)
         sat.m.Equation(sat.opt_state[i,5].dt() == -MU*sat.opt_state[i,2]/(sat.opt_state[i,0]**2 + sat.opt_state[i,1]**2 + sat.opt_state[i,2]**2)**1.5)
     
-        # Set initial conditions
-        sat.m.Equation(sat.opt_state[i,0] == x_traj[i,0,sat.id])
-        sat.m.Equation(sat.opt_state[i,1] == x_traj[i,1,sat.id])
-        sat.m.Equation(sat.opt_state[i,2] == x_traj[i,2,sat.id])
-        sat.m.Equation(sat.opt_state[i,3] == x_traj[i,3,sat.id])
-        sat.m.Equation(sat.opt_state[i,4] == x_traj[i,4,sat.id])
-        sat.m.Equation(sat.opt_state[i,5] == x_traj[i,5,sat.id])
+    # Set initial conditions
+    for i in range(state_dim):
+        sat.opt_state[0,i].value = x_traj[0,i,sat.id]
     
     objective = 0
     for i in range(N):
-        # for j in range(bearing_dim):
-        #     diff = y[i,j,sat.id] - sat.y_est_landmark[i][j]
-        #     objective += (diff*diff)*(1/R[j,j])
+    #     # for j in range(bearing_dim):
+    #     #     diff = y[i,j,sat.id] - sat.y_est_landmark[i][j]
+    #     #     objective += (diff*diff)*(1/R[j,j])
 
-        # for j in range(n_sats-1):
-        #     diff = y[i,j+bearing_dim,sat.id] - sat.y_est_inter_range[i][j]
-        #     objective += (diff * diff)*(1/R[j+bearing_dim,j+bearing_dim])
+    #     # for j in range(n_sats-1):
+    #     #     diff = y[i,j+bearing_dim,sat.id] - sat.y_est_inter_range[i][j]
+    #     #     objective += (diff * diff)*(1/R[j+bearing_dim,j+bearing_dim])
 
 
         diff = (y[i,:,sat.id] - sat.y_est[i][:])
@@ -406,15 +399,8 @@ for sat in sats:
 
     sat.m.Minimize(objective)
 
-    # sat.m.Minimize(sum((y[i,:,sat.id] - sat.y_est[i,:]).T@np.linalg.inv(R)@(y[i,:,sat.id] - sat.y_est[i,:]) for i in range(N)))
+    # sat.m.Minimize(sum((y[i,:,sat.id] - sat.y_est[i][:]).T@np.linalg.inv(R)@(y[i,:,sat.id] - sat.y_est[i][:]) for i in range(N)))
     sat.m.solve(disp=True)
-
-    # print("r_x:", r_x.value)
-    # print("r_y:", r_y.value)
-    # print("r_z:", r_z.value)
-    # print("v_x:", v_x.value)
-    # print("v_y:", v_y.value)
-    # print("v_z:", v_z.value)
 
     print("done")
     
