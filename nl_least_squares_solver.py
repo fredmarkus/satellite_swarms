@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import csv
 import math
+import yaml
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2
@@ -28,10 +29,10 @@ class satellite:
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
         
-        self.info_matrix = np.linalg.inv(self.cov_m)
-        self.info_vector = self.info_matrix@self.x_0
-        self.x_p = self.x_0 # Initialize the prior vector exactly the same as the measurement vector
-        self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
+        # self.info_matrix = np.linalg.inv(self.cov_m)
+        # self.info_vector = self.info_matrix@self.x_0
+        # self.x_p = self.x_0 # Initialize the prior vector exactly the same as the measurement vector
+        # self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
 
         self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
@@ -172,7 +173,7 @@ for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 #Parameters
-N = 30
+N = 25
 f = 1 #Hz
 dt = 1/f
 n_sats = 3
@@ -186,51 +187,20 @@ state_dim = 6
 x_traj = np.zeros((N, 6, n_sats)) # Discretized trajectory of satellite states over time period 
 
 ### Satellite Initialization ###
-x00 = np.array([R_SAT, 0, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
-x01 = np.array([0, R_SAT, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
-x02 = np.array([-R_SAT, 0, 0, 0, 0, np.sqrt(MU/R_SAT)]) # Initial state of satellite. For now assume a circular orbit
 
-sat0 = satellite(
-    state=x00,
-    rob_cov_init=0.25,
-    robot_id=0,
-    dim=6,
-    meas_dim=meas_dim,
-    R_weight=R_weight,
-    Q_weight=0.25,
-    N=N,
-    n_sats=n_sats,
-    landmarks=landmark_objects
-)
+with open("config.yaml", "r") as file:
+    config = yaml.safe_load(file)
 
-sat1 = satellite(
-    state=x01,
-    rob_cov_init=0.25,
-    robot_id=1,
-    dim=6,
-    meas_dim=meas_dim,
-    R_weight=R_weight,
-    Q_weight=0.25,
-    N=N,
-    n_sats=n_sats,
-    landmarks=landmark_objects
+sats = []
 
-)
+for sat_config in config["satellites"]:
+    sat_config["state"] = np.array(sat_config["state"])
+    sat_config["state"][5] = np.sqrt(MU/R_SAT)
+    sat_config["N"] = N
+    sat_config["landmarks"] = landmark_objects
+    satellite_inst = satellite(**sat_config)
+    sats.append(satellite_inst)
 
-sat2 = satellite(
-    state=x02,
-    rob_cov_init=0.25,
-    robot_id=2,
-    dim=6,
-    meas_dim=meas_dim,
-    R_weight=R_weight,
-    Q_weight=0.25,
-    N=N,
-    n_sats=n_sats,
-    landmarks=landmark_objects
-)
-
-sats = [sat0, sat1, sat2]
 
 # Generate synthetic data for exponential decay in three dimensions with noise
 np.random.seed(0)        # For reproducibility
@@ -242,8 +212,6 @@ for sat in sats:
     for i in range(N):
         x = rk4_discretization(x, dt)
         x_traj[i,:,sat.id] = x
-
-
 
 # Generate synthetic data for satellite ranging
 y_m = np.zeros((N,meas_dim,n_sats))
