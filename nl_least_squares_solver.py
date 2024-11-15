@@ -53,9 +53,6 @@ class satellite:
             self.min_landmark_list = np.array([closest_landmark(self.curr_pos, landmarks)]).reshape(1,3)
         else:
             self.min_landmark_list = np.append(self.min_landmark_list,[closest_landmark(self.curr_pos, landmarks)],axis=0)
-
-        # if self.min_landmark is None:
-        #     raise Exception("No landmarks found")
         
         vec = (self.curr_pos - self.min_landmark_list[-1]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
         return vec/np.linalg.norm(self.curr_pos - self.min_landmark_list[-1])
@@ -195,14 +192,14 @@ sats = []
 
 for sat_config in config["satellites"]:
     sat_config["state"] = np.array(sat_config["state"])
-    sat_config["state"][5] = np.sqrt(MU/R_SAT)
+    sat_config["state"][5] = np.sqrt(MU/R_SAT) # for now assign velocity that generates a circular orbit
     sat_config["N"] = N
     sat_config["landmarks"] = landmark_objects
     satellite_inst = satellite(**sat_config)
     sats.append(satellite_inst)
 
 
-# Generate synthetic data for exponential decay in three dimensions with noise
+# Generate synthetic data
 np.random.seed(0)        # For reproducibility
 time_data = np.linspace(0, N, N*f)  # Time points
 #
@@ -213,7 +210,6 @@ for sat in sats:
         x = rk4_discretization(x, dt)
         x_traj[i,:,sat.id] = x
 
-# Generate synthetic data for satellite ranging
 y_m = np.zeros((N,meas_dim,n_sats))
 for i in range(N):
 
@@ -232,7 +228,7 @@ for sat in sats:
             sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
             sat_i += 1
         
-
+# Set up and solve nonlinear least squares problem
 for sat in sats:
     # Initialize GEKKO model
     m = GEKKO(remote=False)
@@ -255,7 +251,7 @@ for sat in sats:
 
     y = [None]*(meas_dim)
 
-    # Assign bearing measurements
+    # Assign bearing measurements: Always 3 dimensional
     xref = m.Param(value=sat.min_landmark_list[:,0])  # x_ref for x1
     yref = m.Param(value=sat.min_landmark_list[:,1])  # y_ref for x2
     zref = m.Param(value=sat.min_landmark_list[:,2])  # z_ref for x3
@@ -264,7 +260,7 @@ for sat in sats:
     y[1] = m.Intermediate((x2 - yref)/norm)
     y[2] = m.Intermediate((x3 - zref)/norm)
 
-    # Assign range measurements
+    # Assign range measurements: n_sats-1 dimensional
     for i in range(n_sats-1):
         xref = m.Param(value=sat.other_sats_pos[:, 0, i])  # x_ref for x1
         yref = m.Param(value=sat.other_sats_pos[:, 1, i])  # y_ref for x2
