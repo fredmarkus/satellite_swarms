@@ -42,25 +42,19 @@ class satellite:
 
         self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
-        self.other_sats_pos = np.ndarray(shape=(N,3,n_sats-1)) # Provides the position of the other satellites for all N timesteps
+        self.other_sats_pos = np.zeros((N, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
 
-    def h_landmark(self, i, x):
-        # print('x considered in landmark',x)
+    def h_landmark(self, x):
         min_landmark = closest_landmark(x,self.landmarks)
-        # print('min landmark',min_landmark)
-        # timestep = math.floor(i/self.N)
-        # remainder = i%self.N
-        # if remainder > 2:
-        #     print("Error: Invalid index for landmark part of state vector")
         norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
         
         return (x - min_landmark)/norm
     
-    def h_inter_range(self, i, x): # This function calculates the range measurement between the satellite and another satellite
-        timestep = math.floor(i/self.N)
-        sat_id = i%self.N - 3 # This is to account for the fact that the first 3 indices are the bearing measurements
-        sat_pos = self.other_sats_pos[timestep,:,sat_id]
-        norm = math.sqrt((x[timestep+2] - sat_pos[0])**2 + (x[timestep+1] - sat_pos[1])**2 + (x[timestep+2] - sat_pos[2])**2)
+    def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
+        # timestep = math.floor((i-1)/3)
+        sat_id = j-3 # j is the range measurement index startj g
+        sat_pos = self.other_sats_pos[i,:,sat_id]
+        norm = jnp.sqrt((x[0] - sat_pos[0])**2 + (x[1] - sat_pos[1])**2 + (x[2] - sat_pos[2])**2)
         return norm
     
     def measure_z_range(self, sats: list) -> np.ndarray:
@@ -202,11 +196,11 @@ for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 #Parameters
-N = 40
+N = 10
 f = 1 #Hz
 dt = 1/f
-n_sats = 1
-R_weight = 0.25
+n_sats = 3
+R_weight = 0.1
 bearing_dim = 3
 meas_dim = n_sats-1 + bearing_dim
 R = np.eye(meas_dim)*R_weight
@@ -227,6 +221,9 @@ for sat_config in config["satellites"]:
     sat_config["state"][5] = np.sqrt(MU/R_SAT) # for now assign velocity that generates a circular orbit
     sat_config["N"] = N
     sat_config["landmarks"] = landmark_objects
+    sat_config["meas_dim"] = meas_dim
+    sat_config["n_sats"] = n_sats
+    sat_config["R_weight"] = R_weight
     satellite_inst = satellite(**sat_config)
     sats.append(satellite_inst)
 
@@ -239,10 +236,11 @@ time_data = np.linspace(0, N, N*f)  # Time points
 for sat in sats: 
     x = sat.x_0
     for i in range(N):
-        x = euler_discretization(x, dt)
         x_traj[i,:,sat.id] = x
+        x = euler_discretization(x, dt)
 
 y_m = jnp.zeros((N,meas_dim,n_sats))
+
 for i in range(N):
 
     for sat in sats:
@@ -259,6 +257,8 @@ for sat in sats:
     sat_i = 0 #iterator variable
     for other_sat in sats:
         if sat.id != other_sat.id:
+            # for i in range(N):
+                # sat.other_sats_pos[i,:,sat_i] = x_traj[i,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
             sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
             sat_i += 1
 
@@ -280,17 +280,17 @@ for sat in sats:
         def objective(self, x):
             obj = 0
             for i in range(self.N):
-                index = i*3
-                obj += (jnp.sum(y_m[i,0:3,sat.id] - self.sat.h_landmark(index, x[index:index+3])))**2
+                start_i = i*3
+                # TODO Include covariance matrix in the objective function
+                # print(y_m[i,0:3,sat.id])
+                obj += (jnp.sum(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3])))**2
                 for j in range(3,self.meas_dim):
-                    index = i*3 + j
-                    # if j < self.bearing_dim:
-                    #    obj += (y_m[i,j,sat.id] - self.sat.h_landmark(index, x[index:index+3]))**2
-                    #else: 
-                    # TODO: Fix this part for inter_range measurements"
-                    obj += (y_m[i,j,sat.id] - self.sat.h_inter_range(index, x[index]))**2
-                    # obj += (y_m[i,j,sat.id] - self.sat.h_landmark(x[index], index)**2)
-
+                    # print(y_m[i,j,sat.id])
+                    # index = start_i+j
+                    term= (y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+                    # print(term)
+                    obj += term
+                    
             return obj
 
         def gradient(self, x):
@@ -310,7 +310,7 @@ for sat in sats:
             # g[:dim] = x[:dim] - self.sat.x_0[0:3] #initial condition constraint positions
 
             for i in range(1,self.N-2): # TODO Check the range here
-                norm_pos = x[i]**2 + x[i+1]**2 + x[i+2]**2
+                norm_pos = x[i*dim]**2 + x[i*dim+1]**2 + x[i*dim+2]**2
                 
                 # constraints combining position and velocity using central difference
                 g = g.at[i*dim + 0].set(x[(i+2)*dim+ 0] - 2*x[(i+1)*dim + 0] + x[i*dim + 0] + (dt**2)*self.MU*x[i*dim + 0]/norm_pos**3)
@@ -351,9 +351,10 @@ for sat in sats:
     )
 
     # glob_x0 = [1]*(N*3)
-    glob_x0 = np.array(sat.x_0[0:3])
+    # glob_x0 = np.array(sat.x_0[0:3])
+    glob_x0 = np.array([1,1,1])
     glob_x0 = np.tile(glob_x0, N)
-    nlp.add_option('max_iter', 1000)
+    nlp.add_option('max_iter', 500)
     nlp.add_option('tol', 1e-6)
     nlp.add_option('print_level', 5)
     nlp.add_option('mu_strategy', 'adaptive')
