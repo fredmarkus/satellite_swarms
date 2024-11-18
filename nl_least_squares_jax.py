@@ -296,7 +296,6 @@ for sat in sats:
         def gradient(self, x):
             grad = jax.grad(self.objective)(x)
 
-
             return grad
 
         def constraints(self, x):
@@ -305,11 +304,8 @@ for sat in sats:
             g = g.at[0].set(x[0] - self.sat.x_0[0]) 
             g = g.at[1].set(x[1] - self.sat.x_0[1])
             g = g.at[2].set(x[2] - self.sat.x_0[2])
-
-            # g[:dim] = g[:dim].at[0].set(x[:dim] - self.sat.x_0[0:3]) #initial condition constraint positions
-            # g[:dim] = x[:dim] - self.sat.x_0[0:3] #initial condition constraint positions
-
-            for i in range(1,self.N-2): # TODO Check the range here
+            
+            for i in range(1,self.N-2):
                 norm_pos = x[i*dim]**2 + x[i*dim+1]**2 + x[i*dim+2]**2
                 
                 # constraints combining position and velocity using central difference
@@ -317,24 +313,155 @@ for sat in sats:
                 g = g.at[i*dim + 1].set(x[(i+2)*dim+ 1] - 2*x[(i+1)*dim + 1] + x[i*dim + 1] + (dt**2)*self.MU*x[i*dim + 1]/norm_pos**3)
                 g = g.at[i*dim + 2].set(x[(i+2)*dim+ 2] - 2*x[(i+1)*dim + 2] + x[i*dim + 2] + (dt**2)*self.MU*x[i*dim + 2]/norm_pos**3)
 
+            # # Backward
+            for i in range(self.N-2,self.N):
+                norm_pos = x[i*dim]**2 + x[i*dim+1]**2 + x[i*dim+2]**2
+                g = g.at[i*dim+0].set(x[(i)*dim+0] - 2*x[(i-1)*dim+0] + x[(i-2)*dim+0] + (dt**2)*self.MU*x[i*dim+0]/norm_pos**3)
+                g = g.at[i*dim+1].set(x[(i)*dim+1] - 2*x[(i-1)*dim+1] + x[(i-2)*dim+1] + (dt**2)*self.MU*x[i*dim+1]/norm_pos**3)
+                g = g.at[i*dim+2].set(x[(i)*dim+2] - 2*x[(i-1)*dim+2] + x[(i-2)*dim+2] + (dt**2)*self.MU*x[i*dim+2]/norm_pos**3)
+
+
+
+            # g[0] = x[(i)*dim] - 2*x[(i-1)*dim] + x[(i-2)*dim] + (dt**2)*self.MU*x[i*dim]/norm_pos**3
+            # g[1] = x[(i)*dim+1] - 2*x[(i-1)*dim+1] + x[(i-2)*dim+1] + (dt**2)*self.MU*x[i*dim+1]/norm_pos**3
+            # g[2] = x[(i)*dim+2] - 2*x[(i-1)*dim+2] + x[(i-2)*dim+2] + (dt**2)*self.MU*x[i*dim+2]/norm_pos**3
 
             return g
 
 
         def jacobian(self, x):
             jacobian = jax.jacfwd(self.constraints)(x)
-            # print(jacobian.shape)
-            # print(jacobian.reshape(-1))
+            jacobian = jacobian[self.jrow, self.jcol]
             
-            return jacobian.reshape(-1)
+            return jacobian
 
 
         # TODO: Implement the hessian and the jacobian structure functions
         # def hessian(self, x, lagrange, obj_factor):
         #     pass
 
-        # def jacobianstructure(self):
-        #     pass
+        def jacobianstructure(self):
+            dim = 3
+            row = []
+            col = []
+
+            # Initial conditions
+            row.extend([0,1,2])
+            col.extend([0,1,2])
+
+            for i in range(1,N-2):
+
+                row.append(i*dim)
+                col.append(i*dim)
+                
+                row.append(i*dim)
+                col.append(i*dim+1)
+
+                row.append(i*dim)
+                col.append(i*dim+2)
+
+                row.append(i*dim)
+                col.append(i*dim+3)
+                
+                row.append(i*dim)
+                col.append(i*dim+6)
+
+                row.append(i*dim+1)
+                col.append(i*dim)
+
+                row.append(i*dim+1)
+                col.append(i*dim+1)
+
+                row.append(i*dim+1)
+                col.append(i*dim+2)
+
+                row.append(i*dim+1)
+                col.append(i*dim+4)
+
+                row.append(i*dim+1)
+                col.append(i*dim+7)
+
+                row.append(i*dim+2)
+                col.append(i*dim)
+
+                row.append(i*dim+2)
+                col.append(i*dim+1)
+
+                row.append(i*dim+2)
+                col.append(i*dim+2)
+
+                row.append(i*dim+2)
+                col.append(i*dim+5)
+
+                row.append(i*dim+2)
+                col.append(i*dim+8)
+
+
+            # Columns will carry indices outside the range of N*dim Remove these indices in the row and column arrays
+            for elem in col: 
+                if elem >= N*dim:
+                    index = col.index(elem)
+                    # remove element at index
+                    col = col[:index] + col[index+1:]
+                    row = row[:index] + row[index+1:]
+
+            # final two timesteps require backward difference
+            for i in range(N-2,N):
+
+                row.append(i*dim)
+                col.append(i*dim-6)
+                        
+                row.append(i*dim)
+                col.append(i*dim-3)
+                
+                row.append(i*dim)
+                col.append(i*dim)
+
+                row.append(i*dim)
+                col.append(i*dim+1)
+
+                row.append(i*dim)
+                col.append(i*dim+2)
+
+                row.append(i*dim+1)
+                col.append(i*dim-5)
+                
+                row.append(i*dim+1)
+                col.append(i*dim-2)
+
+                row.append(i*dim+1)
+                col.append(i*dim)
+
+                row.append(i*dim+1)
+                col.append(i*dim+1)
+
+                row.append(i*dim+1)
+                col.append(i*dim+2)
+
+                row.append(i*dim+2)
+                col.append(i*dim-4)
+
+                row.append(i*dim+2)
+                col.append(i*dim-1)
+
+                row.append(i*dim+2)
+                col.append(i*dim)
+
+                row.append(i*dim+2)
+                col.append(i*dim+1)
+
+                row.append(i*dim+2)
+                col.append(i*dim+2)
+                
+            # jac = np.zeros((self.N*3,self.N*3))
+            # for i in range(len(row)):
+            #     jac[row[i],col[i]] = 11
+
+            # print(jac)
+            self.jrow = np.array(row, dtype=int)
+            self.jcol = np.array(col, dtype=int)
+
+            return np.array(row, dtype=int), np.array(col, dtype=int)
 
         # def hessianstructure(self):
         #     pass
@@ -352,7 +479,7 @@ for sat in sats:
 
     # glob_x0 = [1]*(N*3)
     # glob_x0 = np.array(sat.x_0[0:3])
-    glob_x0 = np.array([1,1,1])
+    glob_x0 = np.array([10,10,10])
     glob_x0 = np.tile(glob_x0, N)
     nlp.add_option('max_iter', 500)
     nlp.add_option('tol', 1e-6)
