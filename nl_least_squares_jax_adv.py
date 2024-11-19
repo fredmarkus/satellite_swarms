@@ -196,8 +196,8 @@ for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 #Parameters
-N = 5
-f = 2 #Hz
+N = 100
+f = 1 #Hz
 dt = 1/f
 n_sats = 3
 R_weight = 0.1
@@ -306,7 +306,7 @@ for sat in sats:
             # for i in range(1,self.N-2):
             norm = jnp.linalg.norm(x[3:6])
             
-            # constraints combining position and velocity using central difference for first position
+            # constraints combining position and velocity using forward difference for first position
             g = g.at[3].set(x[9] - 2*x[6] + x[3] + (dt**2)*self.MU*x[3]/norm**3)
             g = g.at[4].set(x[10] - 2*x[7] + x[4] + (dt**2)*self.MU*x[4]/norm**3)
             g = g.at[5].set(x[11] - 2*x[8] + x[5] + (dt**2)*self.MU*x[5]/norm**3)
@@ -318,7 +318,7 @@ for sat in sats:
                 # Extract positions at required time steps
                 x_im2 = x[(i - 2) * dim : (i - 1) * dim]
                 x_im1 = x[(i - 1) * dim : i * dim]
-                x_i = x[idx : idx + dim]
+                x_i = x[i * dim : (i + 1) * dim]
                 x_ip1 = x[(i + 1) * dim : (i + 2) * dim]
                 x_ip2 = x[(i + 2) * dim : (i + 3) * dim]
 
@@ -326,11 +326,11 @@ for sat in sats:
                 x_ddot = (-x_ip2 + 16 * x_ip1 - 30 * x_i + 16 * x_im1 - x_im2) / (12 * dt**2)
 
                 # Compute the acceleration from Newton's law
-                norm_xi = jnp.linalg.norm(x_i)
+                norm_xi = jnp.sqrt(x[i*dim]**2 + x[i*dim + 1]**2 + x[i*dim + 2]**2)
                 a_i = -self.MU * x_i / norm_xi**3
 
                 # Set the constraints to enforce x_ddot = a_i
-                g = g.at[idx : idx + dim].set(x_ddot - a_i)
+                g = g.at[i * dim : (i + 1) * dim].set(x_ddot - a_i)
 
 
 
@@ -347,197 +347,200 @@ for sat in sats:
 
         def jacobian(self, x):
             jacobian = jax.jacfwd(self.constraints)(x)
-            # jacobian = jacobian[self.jrow, self.jcol]
+            jacobian = jacobian[self.jrow, self.jcol]
             
             return jacobian
 
         
-        # def jacobianstructure(self):
-        #     dim = 3
-        #     row = []
-        #     col = []
+        def jacobianstructure(self):
+            dim = 3
+            row = []
+            col = []
 
-        #     # Initial conditions
-        #     row.extend([0,1,2])
-        #     col.extend([0,1,2])
+            # Initial conditions
+            row.extend([0,1,2])
+            col.extend([0,1,2])
 
-        #     row.append(dim)
-        #     col.append(dim)
+            # First time step requires forward difference
+            row.append(dim)
+            col.append(dim)
             
-        #     row.append(dim)
-        #     col.append(dim+1)
+            row.append(dim)
+            col.append(dim+1)
 
-        #     row.append(dim)
-        #     col.append(dim+2)
+            row.append(dim)
+            col.append(dim+2)
 
-        #     row.append(dim)
-        #     col.append(dim+3)
+            row.append(dim)
+            col.append(dim+3)
             
-        #     row.append(dim)
-        #     col.append(dim+6)
+            row.append(dim)
+            col.append(dim+6)
 
-        #     row.append(dim+1)
-        #     col.append(dim)
+            row.append(dim+1)
+            col.append(dim)
 
-        #     row.append(dim+1)
-        #     col.append(dim+1)
+            row.append(dim+1)
+            col.append(dim+1)
 
-        #     row.append(dim+1)
-        #     col.append(dim+2)
+            row.append(dim+1)
+            col.append(dim+2)
 
-        #     row.append(dim+1)
-        #     col.append(dim+4)
+            row.append(dim+1)
+            col.append(dim+4)
 
-        #     row.append(dim+1)
-        #     col.append(dim+7)
+            row.append(dim+1)
+            col.append(dim+7)
 
-        #     row.append(dim+2)
-        #     col.append(dim)
+            row.append(dim+2)
+            col.append(dim)
 
-        #     row.append(dim+2)
-        #     col.append(dim+1)
+            row.append(dim+2)
+            col.append(dim+1)
 
-        #     row.append(dim+2)
-        #     col.append(dim+2)
+            row.append(dim+2)
+            col.append(dim+2)
 
-        #     row.append(dim+2)
-        #     col.append(dim+5)
+            row.append(dim+2)
+            col.append(dim+5)
 
-        #     row.append(dim+2)
-        #     col.append(dim+8)
+            row.append(dim+2)
+            col.append(dim+8)
 
-        #     for i in range(2,N-2):
-        #         row.append(i*dim)
-        #         col.append(i*dim-6)
+            for i in range(2,N-2):
+                row.append(i*dim)
+                col.append(i*dim-6)
                 
-        #         row.append(i*dim)
-        #         col.append(i*dim-3)
+                row.append(i*dim)
+                col.append(i*dim-3)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim)
+                row.append(i*dim)
+                col.append(i*dim)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim+1)
+                row.append(i*dim)
+                col.append(i*dim+1)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim+2)
+                row.append(i*dim)
+                col.append(i*dim+2)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim+3)
+                row.append(i*dim)
+                col.append(i*dim+3)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim+6)
+                row.append(i*dim)
+                col.append(i*dim+6)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim-5)
+                row.append(i*dim+1)
+                col.append(i*dim-5)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim-2)
+                row.append(i*dim+1)
+                col.append(i*dim-2)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim)
+                row.append(i*dim+1)
+                col.append(i*dim)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim+1)
+                row.append(i*dim+1)
+                col.append(i*dim+1)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim+2)
+                row.append(i*dim+1)
+                col.append(i*dim+2)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim+4)
+                row.append(i*dim+1)
+                col.append(i*dim+4)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim+7)
+                row.append(i*dim+1)
+                col.append(i*dim+7)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim-4)
+                row.append(i*dim+2)
+                col.append(i*dim-4)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim-1)
+                row.append(i*dim+2)
+                col.append(i*dim-1)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim)
+                row.append(i*dim+2)
+                col.append(i*dim)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim+1)
+                row.append(i*dim+2)
+                col.append(i*dim+1)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim+2)
+                row.append(i*dim+2)
+                col.append(i*dim+2)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim+5)
+                row.append(i*dim+2)
+                col.append(i*dim+5)
 
-        #         row.append(i*dim+2)
-        #         row.append(i*dim+8)
+                row.append(i*dim+2)
+                col.append(i*dim+8)
 
-        #     # Columns will carry indices outside the range of N*dim Remove these indices in the row and column arrays
-        #     for elem in col: 
-        #         if elem >= N*dim:
-        #             index = col.index(elem)
-        #             # remove element at index
-        #             col = col[:index] + col[index+1:]
-        #             row = row[:index] + row[index+1:]
+            # Columns will carry indices outside the range of N*dim Remove these indices in the row and column arrays
+            # for elem in col: 
+            #     if elem >= N*dim:
+            #         index = col.index(elem)
+            #         # remove element at index
+            #         col = col[:index] + col[index+1:]
+            #         row = row[:index] + row[index+1:]
 
-        #     # final two timesteps require backward difference
-        #     for i in range(N-2,N):
+            # final two timesteps require backward difference
+            for i in range(N-2,N):
 
-        #         row.append(i*dim)
-        #         col.append(i*dim-6)
+                row.append(i*dim)
+                col.append(i*dim-6)
                         
-        #         row.append(i*dim)
-        #         col.append(i*dim-3)
+                row.append(i*dim)
+                col.append(i*dim-3)
                 
-        #         row.append(i*dim)
-        #         col.append(i*dim)
+                row.append(i*dim)
+                col.append(i*dim)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim+1)
+                row.append(i*dim)
+                col.append(i*dim+1)
 
-        #         row.append(i*dim)
-        #         col.append(i*dim+2)
+                row.append(i*dim)
+                col.append(i*dim+2)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim-5)
+                row.append(i*dim+1)
+                col.append(i*dim-5)
                 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim-2)
+                row.append(i*dim+1)
+                col.append(i*dim-2)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim)
+                row.append(i*dim+1)
+                col.append(i*dim)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim+1)
+                row.append(i*dim+1)
+                col.append(i*dim+1)
 
-        #         row.append(i*dim+1)
-        #         col.append(i*dim+2)
+                row.append(i*dim+1)
+                col.append(i*dim+2)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim-4)
+                row.append(i*dim+2)
+                col.append(i*dim-4)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim-1)
+                row.append(i*dim+2)
+                col.append(i*dim-1)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim)
+                row.append(i*dim+2)
+                col.append(i*dim)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim+1)
+                row.append(i*dim+2)
+                col.append(i*dim+1)
 
-        #         row.append(i*dim+2)
-        #         col.append(i*dim+2)
+                row.append(i*dim+2)
+                col.append(i*dim+2)
                 
-        #     # jac = np.zeros((self.N*3,self.N*3))
-        #     # for i in range(len(row)):
-        #     #     jac[row[i],col[i]] = 11
+            # jac = np.zeros((self.N*3,self.N*3))
+            # for i in range(len(row)):
+            #     jac[row[i],col[i]] = 11
 
-        #     # print(jac)
-        #     self.jrow = np.array(row, dtype=int)
-        #     self.jcol = np.array(col, dtype=int)
+            # print(jac)
+            self.jrow = np.array(row, dtype=int)
+            self.jcol = np.array(col, dtype=int)
 
-        #     return np.array(row, dtype=int), np.array(col, dtype=int)
+            return np.array(row, dtype=int), np.array(col, dtype=int)
 
 
         # TODO: Implement the hessian and its structure functions
+        # Currently we are still relying on the default hessian approximation which is ok but leads to performance deficits
+
         # def hessian(self, x, lagrange, obj_factor):
         #     print(lagrange.shape)
         #     hess = obj_factor*jax.hessian(self.objective)(x)
@@ -575,7 +578,7 @@ for sat in sats:
 
     # glob_x0 = [1]*(N*3)
     glob_x0 = np.array(sat.x_0[0:3])
-    # glob_x0 = np.array([1000,0,1000])
+    # glob_x0 = np.array([1000,1000,1000])
     glob_x0 = np.tile(glob_x0, N)
     nlp.add_option('max_iter', 100)
     nlp.add_option('tol', 1e-6)
@@ -596,4 +599,4 @@ for sat in sats:
     # TODOs:
     # Implement Hessian and its structure functions
     # Check correctness of results and indexing operations
-    # RK4 rather than Euler
+    # Clean up code in particular jacobian structure function Could potentially use central difference for the jacobian structure function on penultimate stage
