@@ -1,4 +1,3 @@
-from gekko import GEKKO
 import numpy as np
 import matplotlib.pyplot as plt
 import csv
@@ -7,7 +6,6 @@ import yaml
 import cyipopt
 import jax
 import jax.numpy as jnp
-import time
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2
@@ -214,7 +212,7 @@ sats = []
 
 for sat_config in config["satellites"]:
     sat_config["state"] = np.array(sat_config["state"])
-    # sat_config["state"][5] = float(np.sqrt(MU/R_SAT)) # for now assign velocity that generates a circular orbit
+    # sat_config["state"][5] = float(np.sqrt(MU/R_SAT)) # for now assign velocity using vis-viva equation
     sat_config["N"] = N
     sat_config["landmarks"] = landmark_objects
     sat_config["meas_dim"] = meas_dim
@@ -341,6 +339,7 @@ for sat in sats:
                     row.append((i+1) * dim + row_offset)
                     col.append(i * dim + col_offset)
        
+            # Visualization of the Jacobian mask. Check it matches the actual Jacobian. Using '11' rather than '1' for easier intepretation
             # jac = np.zeros((self.N*6,self.N*6))
             # for i in range(len(row)):
             #     jac[row[i],col[i]] = 11
@@ -432,9 +431,6 @@ for sat in sats:
 
 
     # TODOs:
-    # Implement Hessian and its structure functions
-    # Check correctness of results and indexing operations
-    # Could potentially use central difference for the jacobian structure function on penultimate stage
     # Plot the results
     # Implement recursive case that can take repeated measurements
     # Handle the case of two satellites not being able to see each other due to the earth being in the way
