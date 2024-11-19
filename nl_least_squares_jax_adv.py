@@ -355,27 +355,40 @@ for sat in sats:
         # TODO: Implement the hessian and its structure functions
         # Currently we are still relying on the default hessian approximation which is ok but leads to performance deficits
 
-        # def hessian(self, x, lagrange, obj_factor):
-        #     hess = obj_factor*jax.hessian(self.objective)(x)
-        #     hess3d = jax.hessian(self.constraints)(x)
-        #     hess2 = np.tensordot(hess3d, lagrange, axes=([2], [0]))
-        #     hess_final = hess + hess2
-        #     hess_final = hess_final[self.hrow, self.hcol]
-        #     # print(hess2)
-        #     return hess_final
+        ### NOTE: HESSIAN IS ONLY CALLED WHEN HESSIAN_APPROXIMATION IS SET TO 'EXACT' ###
+        def hessian(self, x, lagrange, obj_factor):
+            hess = obj_factor*jax.hessian(self.objective)(x)
+            hess3d = jax.hessian(self.constraints)(x)
+            hess2 = np.tensordot(hess3d, lagrange, axes=([2], [0]))
+            hess_final = hess + hess2
+            hess_final = hess_final[self.hrow, self.hcol]
+            return hess_final
 
-        # def hessianstructure(self):
-        #     # Define the 3x3 block matrix
-        #     B = np.array([[1, 0, 0],
-        #                 [1, 1, 0],
-        #                 [1, 1, 1]])
+        def hessianstructure(self):
+            half_dim = 3
+            row = []
+            col = []
 
-        #     # Create the block diagonal matrix
-        #     block_diag_matrix = np.kron(np.eye(self.N), B)
-        #     rows, cols = np.nonzero(block_diag_matrix)
-        #     self.hrow = rows
-        #     self.hcol = cols
-        #     return np.array(rows, dtype=int), np.array(cols, dtype=int)
+            offsets = [
+                (0, 0), 
+                (1, 0), (1, 1),
+                (2, 0), (2, 1), (2, 2)                
+            ]
+
+            for i in range(0, N):
+                for row_offset, col_offset in offsets:
+                    row.append(i * half_dim + row_offset)
+                    col.append(i * half_dim + col_offset)
+       
+            hess = np.zeros((self.N*6,self.N*6))
+            for i in range(len(row)):
+                hess[row[i],col[i]] = 11
+
+            # print(hess)
+            self.hrow = np.array(row, dtype=int)
+            self.hcol = np.array(col, dtype=int)
+
+            return np.array(row, dtype=int), np.array(col, dtype=int)
 
         
     solver = trajSolver(x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim)
@@ -390,9 +403,10 @@ for sat in sats:
 
     )
 
-    # glob_x0 = [1]*(N*3)
-    glob_x0 = x_traj[:,:,sat.id]
+    # glob_x0 = [1000]*(N*6)
 
+
+    glob_x0 = x_traj[:,:,sat.id]
     # reset velocities to z
     glob_x0[:,3] = 0.0
     glob_x0[:,4] = 0.0
@@ -408,10 +422,10 @@ for sat in sats:
     nlp.add_option('hessian_approximation', 'limited-memory') # 'exact' or 'limited-memory'
     # nlp.add_option('limited_memory_max_history', 10)
     # nlp.add_option('limited_memory_max_skipping', 2)
-    nlp.add_option('bound_push',1e-6)
-    # nlp.add_option('linear_solver', 'mumps')
+    # nlp.add_option('bound_push',1e-6)
+    nlp.add_option('linear_solver', 'mumps')
 
-    nlp.add_option('output_file', 'output.log')
+    # nlp.add_option('output_file', 'output.log')
 
     x, info = nlp.solve(glob_x0)
     print(x)
