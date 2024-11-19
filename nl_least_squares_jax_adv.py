@@ -196,7 +196,7 @@ for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 #Parameters
-N = 100
+N = 20
 f = 1 #Hz
 dt = 1/f
 n_sats = 3
@@ -362,114 +362,31 @@ for sat in sats:
             col.extend([0,1,2])
 
             # First time step requires forward difference
-            row.append(dim)
-            col.append(dim)
-            
-            row.append(dim)
-            col.append(dim+1)
+            # Define the (row, col) indices
+            coordinates_t1 = [
+                (dim, dim), (dim, dim + 1), (dim, dim + 2), (dim, dim + 3), (dim, dim + 6),
+                (dim + 1, dim), (dim + 1, dim + 1), (dim + 1, dim + 2), (dim + 1, dim + 4), (dim + 1, dim + 7),
+                (dim + 2, dim), (dim + 2, dim + 1), (dim + 2, dim + 2), (dim + 2, dim + 5), (dim + 2, dim + 8)
+            ]
 
-            row.append(dim)
-            col.append(dim+2)
+            # Append to row and col lists
+            for r, c in coordinates_t1:
+                row.append(r)
+                col.append(c)
 
-            row.append(dim)
-            col.append(dim+3)
-            
-            row.append(dim)
-            col.append(dim+6)
 
-            row.append(dim+1)
-            col.append(dim)
+            # Define offsets for the row and col calculations
+            offsets = [
+                (0, -6), (0, -3), (0, 0), (0, 1), (0, 2), (0, 3), (0, 6),
+                (1, -5), (1, -2), (1, 0), (1, 1), (1, 2), (1, 4), (1, 7),
+                (2, -4), (2, -1), (2, 0), (2, 1), (2, 2), (2, 5), (2, 8)
+            ]
 
-            row.append(dim+1)
-            col.append(dim+1)
-
-            row.append(dim+1)
-            col.append(dim+2)
-
-            row.append(dim+1)
-            col.append(dim+4)
-
-            row.append(dim+1)
-            col.append(dim+7)
-
-            row.append(dim+2)
-            col.append(dim)
-
-            row.append(dim+2)
-            col.append(dim+1)
-
-            row.append(dim+2)
-            col.append(dim+2)
-
-            row.append(dim+2)
-            col.append(dim+5)
-
-            row.append(dim+2)
-            col.append(dim+8)
-
-            for i in range(2,N-2):
-                row.append(i*dim)
-                col.append(i*dim-6)
-                
-                row.append(i*dim)
-                col.append(i*dim-3)
-
-                row.append(i*dim)
-                col.append(i*dim)
-
-                row.append(i*dim)
-                col.append(i*dim+1)
-
-                row.append(i*dim)
-                col.append(i*dim+2)
-
-                row.append(i*dim)
-                col.append(i*dim+3)
-
-                row.append(i*dim)
-                col.append(i*dim+6)
-
-                row.append(i*dim+1)
-                col.append(i*dim-5)
-
-                row.append(i*dim+1)
-                col.append(i*dim-2)
-
-                row.append(i*dim+1)
-                col.append(i*dim)
-
-                row.append(i*dim+1)
-                col.append(i*dim+1)
-
-                row.append(i*dim+1)
-                col.append(i*dim+2)
-
-                row.append(i*dim+1)
-                col.append(i*dim+4)
-
-                row.append(i*dim+1)
-                col.append(i*dim+7)
-
-                row.append(i*dim+2)
-                col.append(i*dim-4)
-
-                row.append(i*dim+2)
-                col.append(i*dim-1)
-
-                row.append(i*dim+2)
-                col.append(i*dim)
-
-                row.append(i*dim+2)
-                col.append(i*dim+1)
-
-                row.append(i*dim+2)
-                col.append(i*dim+2)
-
-                row.append(i*dim+2)
-                col.append(i*dim+5)
-
-                row.append(i*dim+2)
-                col.append(i*dim+8)
+            # Loop over the range and apply the offsets
+            for i in range(2, N - 2):
+                for row_offset, col_offset in offsets:
+                    row.append(i * dim + row_offset)
+                    col.append(i * dim + col_offset)
 
             # Columns will carry indices outside the range of N*dim Remove these indices in the row and column arrays
             # for elem in col: 
@@ -480,52 +397,15 @@ for sat in sats:
             #         row = row[:index] + row[index+1:]
 
             # final two timesteps require backward difference
+            offsets = [
+                (0,-6), (0,-3), (0,0), (0,1), (0,2),
+                (1,-5), (1,-2), (1,0), (1,1), (1,2),
+                (2,-4), (2,-1), (2,0), (2,1), (2,2)
+            ]
             for i in range(N-2,N):
-
-                row.append(i*dim)
-                col.append(i*dim-6)
-                        
-                row.append(i*dim)
-                col.append(i*dim-3)
-                
-                row.append(i*dim)
-                col.append(i*dim)
-
-                row.append(i*dim)
-                col.append(i*dim+1)
-
-                row.append(i*dim)
-                col.append(i*dim+2)
-
-                row.append(i*dim+1)
-                col.append(i*dim-5)
-                
-                row.append(i*dim+1)
-                col.append(i*dim-2)
-
-                row.append(i*dim+1)
-                col.append(i*dim)
-
-                row.append(i*dim+1)
-                col.append(i*dim+1)
-
-                row.append(i*dim+1)
-                col.append(i*dim+2)
-
-                row.append(i*dim+2)
-                col.append(i*dim-4)
-
-                row.append(i*dim+2)
-                col.append(i*dim-1)
-
-                row.append(i*dim+2)
-                col.append(i*dim)
-
-                row.append(i*dim+2)
-                col.append(i*dim+1)
-
-                row.append(i*dim+2)
-                col.append(i*dim+2)
+                for row_offset, col_offset in offsets:
+                    row.append(i*dim + row_offset)
+                    col.append(i*dim + col_offset)
                 
             # jac = np.zeros((self.N*3,self.N*3))
             # for i in range(len(row)):
