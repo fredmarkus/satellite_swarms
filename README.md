@@ -11,14 +11,22 @@ To run the code, the following packages are needed:
 - numpy
 - yaml
 
-Run the following commands to setup up the environment:
+Run the following command to setup up the environment:
 
-`conda create --name my_env python=3.12 -y`
+```
+conda create --name my_env python=3.12 -y
+```
 
-`conda activate my_env`
+```
+conda activate my_env
+```
 
-`conda install -c conda-forge ipopt -y`
+```
+conda install -c conda-forge ipopt -y
+```
 
-`pip install -r requirements.txt`
+```
+pip install -r requirements.txt
+```
 
 
