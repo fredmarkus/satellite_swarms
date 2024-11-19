@@ -4,12 +4,9 @@ import matplotlib.pyplot as plt
 import csv
 import math
 import yaml
-from pyomo.environ import *
-from pyomo.dae import *
 import cyipopt
 import jax
 import jax.numpy as jnp
-# import sympy as sp
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2
@@ -51,8 +48,7 @@ class satellite:
         return (x - min_landmark)/norm
     
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
-        # timestep = math.floor((i-1)/3)
-        sat_id = j-3 # j is the range measurement index startj g
+        sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
         norm = jnp.sqrt((x[0] - sat_pos[0])**2 + (x[1] - sat_pos[1])**2 + (x[2] - sat_pos[2])**2)
         return norm
@@ -247,17 +243,13 @@ for i in range(N):
 
     for sat in sats:
         y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(landmark_objects)) # This sets the bearing measurement
-        # y_m[i,0:bearing_dim,sat.id] = sat.measure_z_landmark(landmark_objects) # This sets the bearing measurement
         y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats)) # This sets the range measurement
-        # y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats) # This sets the range measurement
 
 # Get the positions of the other satellites for each satellite
 for sat in sats:
     sat_i = 0 #iterator variable
     for other_sat in sats:
         if sat.id != other_sat.id:
-            # for i in range(N):
-                # sat.other_sats_pos[i,:,sat_i] = x_traj[i,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
             sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
             sat_i += 1
 
@@ -280,15 +272,9 @@ for sat in sats:
             for i in range(self.N):
                 start_i = i*3
                 # TODO Include covariance matrix in the objective function
-                # print(y_m[i,0:3,sat.id])
                 obj += (jnp.sum(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3])))**2
                 for j in range(3,self.meas_dim):
-                    # print(y_m[i,j,sat.id])
-                    # index = start_i+j
-                    term= (y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
-                    # print(term)
-                    obj += term
-                    
+                    obj += (y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
             return obj
 
         def gradient(self, x):
@@ -303,7 +289,6 @@ for sat in sats:
             g = g.at[1].set(x[1] - self.sat.x_0[1])
             g = g.at[2].set(x[2] - self.sat.x_0[2])
             
-            # for i in range(1,self.N-2):
             norm = jnp.linalg.norm(x[3:6])
             
             # constraints combining position and velocity using forward difference for first position
@@ -313,8 +298,6 @@ for sat in sats:
 
             # Adjust the loop to start from i = 2 to N - 3 to account for x_{i-2} and x_{i+2}
             for i in range(2, self.N - 2):
-                idx = i * dim
-
                 # Extract positions at required time steps
                 x_im2 = x[(i - 2) * dim : (i - 1) * dim]
                 x_im1 = x[(i - 1) * dim : i * dim]
@@ -325,13 +308,12 @@ for sat in sats:
                 # Compute the fourth-order finite difference approximation of the second derivative
                 x_ddot = (-x_ip2 + 16 * x_ip1 - 30 * x_i + 16 * x_im1 - x_im2) / (12 * dt**2)
 
-                # Compute the acceleration from Newton's law
+                # Compute the acceleration
                 norm_xi = jnp.sqrt(x[i*dim]**2 + x[i*dim + 1]**2 + x[i*dim + 2]**2)
                 a_i = -self.MU * x_i / norm_xi**3
 
                 # Set the constraints to enforce x_ddot = a_i
                 g = g.at[i * dim : (i + 1) * dim].set(x_ddot - a_i)
-
 
 
             # # Backward
@@ -422,7 +404,6 @@ for sat in sats:
         # Currently we are still relying on the default hessian approximation which is ok but leads to performance deficits
 
         # def hessian(self, x, lagrange, obj_factor):
-        #     print(lagrange.shape)
         #     hess = obj_factor*jax.hessian(self.objective)(x)
         #     hess3d = jax.hessian(self.constraints)(x)
         #     hess2 = np.tensordot(hess3d, lagrange, axes=([2], [0]))
@@ -479,4 +460,5 @@ for sat in sats:
     # TODOs:
     # Implement Hessian and its structure functions
     # Check correctness of results and indexing operations
-    # Clean up code in particular jacobian structure function Could potentially use central difference for the jacobian structure function on penultimate stage
+    # Could potentially use central difference for the jacobian structure function on penultimate stage
+    # Plot the results
