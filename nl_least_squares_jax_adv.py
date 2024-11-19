@@ -7,6 +7,7 @@ import yaml
 import cyipopt
 import jax
 import jax.numpy as jnp
+import time
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2
@@ -50,9 +51,8 @@ class satellite:
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
-        norm = jnp.sqrt((x[0] - sat_pos[0])**2 + (x[1] - sat_pos[1])**2 + (x[2] - sat_pos[2])**2)
-        return norm
-    
+        return jnp.linalg.norm(x - sat_pos) 
+       
     def measure_z_range(self, sats: list) -> np.ndarray:
         z = np.empty((0))
         for sat in sats:
@@ -132,7 +132,7 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
     return ecef.reshape(-1,4)
 
 # Numerical solution using RK4 method
-def rk4_discretization(x: np.ndarray, dt: float) -> np.ndarray:
+def rk4_discretization(x, dt: float):
     r = x[0:3]
     v = x[3:6]
 
@@ -142,7 +142,7 @@ def rk4_discretization(x: np.ndarray, dt: float) -> np.ndarray:
 
     def dv_dt(r):
         """Derivative of v with respect to time is gravitational acceleration."""
-        return (-MU / (np.linalg.norm(r)**3)) * r
+        return (-MU / (jnp.linalg.norm(r)**3)) * r
 
     # Calculate k1 for r and v
     k1_r = dr_dt(v)
@@ -165,7 +165,7 @@ def rk4_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     v_new = v + (dt / 6) * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
 
     # Return the updated state vector
-    return np.concatenate((r_new, v_new))
+    return jnp.concatenate((r_new, v_new))
 
 # Numerical solution of the dynamics using Euler's method
 def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
@@ -176,7 +176,7 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     return np.concatenate((r_new, v_new))
 
 ### Landmark Initialization ###
-# Import csv data for the landmarks
+# Import csv data for the lanldmarks
 landmarks = []
 with open('landmark_coordinates.csv', newline='',) as csvfile:
     reader = csv.reader(csvfile, delimiter=',',)
@@ -192,7 +192,7 @@ for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 #Parameters
-N = 20
+N = 100
 f = 1 #Hz
 dt = 1/f
 n_sats = 3
@@ -214,7 +214,7 @@ sats = []
 
 for sat_config in config["satellites"]:
     sat_config["state"] = np.array(sat_config["state"])
-    sat_config["state"][5] = np.sqrt(MU/R_SAT) # for now assign velocity that generates a circular orbit
+    # sat_config["state"][5] = float(np.sqrt(MU/R_SAT)) # for now assign velocity that generates a circular orbit
     sat_config["N"] = N
     sat_config["landmarks"] = landmark_objects
     sat_config["meas_dim"] = meas_dim
@@ -257,7 +257,7 @@ for sat in sats:
 
 for sat in sats: 
     class trajSolver:
-        def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU):
+        def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim):
             self.x_traj = x_traj
             self.y_m = y_m
             self.sat = sat
@@ -266,15 +266,18 @@ for sat in sats:
             self.bearing_dim = bearing_dim
             self.n_sats = n_sats
             self.MU = MU
-
+            self.cov = self.sat.R_weight*np.eye(3)
+            self.inv_cov = jnp.linalg.inv(self.cov)
+            self.state_dim = state_dim
+            
         def objective(self, x):
             obj = 0
             for i in range(self.N):
                 start_i = i*3
-                # TODO Include covariance matrix in the objective function
-                obj += (jnp.sum(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3])))**2
+                obj += (y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
                 for j in range(3,self.meas_dim):
-                    obj += (y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+                    # print(j, y_m[i,j,self.sat.id])
+                    obj += (1/self.sat.R_weight)*(y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
             return obj
 
         def gradient(self, x):
@@ -282,47 +285,26 @@ for sat in sats:
 
             return grad
 
+
         def constraints(self, x):
-            dim = 3
-            g = jnp.zeros(self.N*dim)
+            
+            g = jnp.zeros((self.N)*self.state_dim)
+            # Position initial conditions
             g = g.at[0].set(x[0] - self.sat.x_0[0]) 
             g = g.at[1].set(x[1] - self.sat.x_0[1])
             g = g.at[2].set(x[2] - self.sat.x_0[2])
-            
-            norm = jnp.linalg.norm(x[3:6])
-            
-            # constraints combining position and velocity using forward difference for first position
-            g = g.at[3].set(x[9] - 2*x[6] + x[3] + (dt**2)*self.MU*x[3]/norm**3)
-            g = g.at[4].set(x[10] - 2*x[7] + x[4] + (dt**2)*self.MU*x[4]/norm**3)
-            g = g.at[5].set(x[11] - 2*x[8] + x[5] + (dt**2)*self.MU*x[5]/norm**3)
-
-            # Adjust the loop to start from i = 2 to N - 3 to account for x_{i-2} and x_{i+2}
-            for i in range(2, self.N - 2):
-                # Extract positions at required time steps
-                x_im2 = x[(i - 2) * dim : (i - 1) * dim]
-                x_im1 = x[(i - 1) * dim : i * dim]
-                x_i = x[i * dim : (i + 1) * dim]
-                x_ip1 = x[(i + 1) * dim : (i + 2) * dim]
-                x_ip2 = x[(i + 2) * dim : (i + 3) * dim]
-
-                # Compute the fourth-order finite difference approximation of the second derivative
-                x_ddot = (-x_ip2 + 16 * x_ip1 - 30 * x_i + 16 * x_im1 - x_im2) / (12 * dt**2)
-
-                # Compute the acceleration
-                norm_xi = jnp.sqrt(x[i*dim]**2 + x[i*dim + 1]**2 + x[i*dim + 2]**2)
-                a_i = -self.MU * x_i / norm_xi**3
-
-                # Set the constraints to enforce x_ddot = a_i
-                g = g.at[i * dim : (i + 1) * dim].set(x_ddot - a_i)
+            # Velocity initial conditions
+            g = g.at[3].set(x[3] - self.sat.x_0[3])
+            g = g.at[4].set(x[4] - self.sat.x_0[4])
+            g = g.at[5].set(x[5] - self.sat.x_0[5])
 
 
-            # # Backward
-            for i in range(self.N-2,self.N):
-                norm_pos = x[i*dim]**2 + x[i*dim+1]**2 + x[i*dim+2]**2
-                g = g.at[i*dim+0].set(x[(i)*dim+0] - 2*x[(i-1)*dim+0] + x[(i-2)*dim+0] + (dt**2)*self.MU*x[i*dim+0]/norm_pos**1.5)
-                g = g.at[i*dim+1].set(x[(i)*dim+1] - 2*x[(i-1)*dim+1] + x[(i-2)*dim+1] + (dt**2)*self.MU*x[i*dim+1]/norm_pos**1.5)
-                g = g.at[i*dim+2].set(x[(i)*dim+2] - 2*x[(i-1)*dim+2] + x[(i-2)*dim+2] + (dt**2)*self.MU*x[i*dim+2]/norm_pos**1.5)
-
+            for i in range(N-1):
+                x_i = x[i*self.state_dim:(i+1)*self.state_dim]
+                x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
+                
+                x_new = rk4_discretization(x_i, dt)
+                g = g.at[(i+1)*self.state_dim:(i+2)*self.state_dim].set(x_new - x_ip1)
 
             return g
 
@@ -335,61 +317,31 @@ for sat in sats:
 
         
         def jacobianstructure(self):
-            dim = 3
+            dim = 6
             row = []
             col = []
 
             # Initial conditions
-            row.extend([0,1,2])
-            col.extend([0,1,2])
-
-            # First time step requires forward difference
-            # Define the (row, col) indices
-            coordinates_t1 = [
-                (dim, dim), (dim, dim + 1), (dim, dim + 2), (dim, dim + 3), (dim, dim + 6),
-                (dim + 1, dim), (dim + 1, dim + 1), (dim + 1, dim + 2), (dim + 1, dim + 4), (dim + 1, dim + 7),
-                (dim + 2, dim), (dim + 2, dim + 1), (dim + 2, dim + 2), (dim + 2, dim + 5), (dim + 2, dim + 8)
-            ]
-
-            # Append to row and col lists
-            for r, c in coordinates_t1:
-                row.append(r)
-                col.append(c)
-
+            row.extend([0,1,2,3,4,5])
+            col.extend([0,1,2,3,4,5])
 
             # Define offsets for the row and col calculations
             offsets = [
-                (0, -6), (0, -3), (0, 0), (0, 1), (0, 2), (0, 3), (0, 6),
-                (1, -5), (1, -2), (1, 0), (1, 1), (1, 2), (1, 4), (1, 7),
-                (2, -4), (2, -1), (2, 0), (2, 1), (2, 2), (2, 5), (2, 8)
+                (0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6),
+                (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 7),
+                (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 8),
+                (3, 0), (3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 9),
+                (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (4, 10),
+                (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 11)
             ]
 
             # Loop over the range and apply the offsets
-            for i in range(2, N - 2):
+            for i in range(0, N-1):
                 for row_offset, col_offset in offsets:
-                    row.append(i * dim + row_offset)
+                    row.append((i+1) * dim + row_offset)
                     col.append(i * dim + col_offset)
-
-            # Columns will carry indices outside the range of N*dim Remove these indices in the row and column arrays
-            # for elem in col: 
-            #     if elem >= N*dim:
-            #         index = col.index(elem)
-            #         # remove element at index
-            #         col = col[:index] + col[index+1:]
-            #         row = row[:index] + row[index+1:]
-
-            # final two timesteps require backward difference
-            offsets = [
-                (0,-6), (0,-3), (0,0), (0,1), (0,2),
-                (1,-5), (1,-2), (1,0), (1,1), (1,2),
-                (2,-4), (2,-1), (2,0), (2,1), (2,2)
-            ]
-            for i in range(N-2,N):
-                for row_offset, col_offset in offsets:
-                    row.append(i*dim + row_offset)
-                    col.append(i*dim + col_offset)
-                
-            # jac = np.zeros((self.N*3,self.N*3))
+       
+            # jac = np.zeros((self.N*6,self.N*6))
             # for i in range(len(row)):
             #     jac[row[i],col[i]] = 11
 
@@ -426,30 +378,38 @@ for sat in sats:
         #     return np.array(rows, dtype=int), np.array(cols, dtype=int)
 
         
-    solver = trajSolver(x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU)
+    solver = trajSolver(x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim)
     nlp = cyipopt.Problem(
-        n = N*3,
-        m = N*3,
+        n = N*state_dim,
+        m = N*state_dim,
         problem_obj = solver,
-        lb = jnp.full(N*3,-np.inf),
-        ub = jnp.full(N*3,np.inf),
-        cl = jnp.zeros(N*3),
-        cu = jnp.zeros(N*3)
+        lb = jnp.full(N*state_dim,-np.inf),
+        ub = jnp.full(N*state_dim,np.inf),
+        cu = jnp.zeros(N*state_dim),
+        cl = jnp.zeros(N*state_dim),
+
     )
 
     # glob_x0 = [1]*(N*3)
-    glob_x0 = np.array(sat.x_0[0:3])
-    # glob_x0 = np.array([1000,1000,1000])
-    glob_x0 = np.tile(glob_x0, N)
+    glob_x0 = x_traj[:,:,sat.id]
+
+    # reset velocities to z
+    glob_x0[:,3] = 0.0
+    glob_x0[:,4] = 0.0
+    glob_x0[:,5] = np.sqrt(MU/R_SAT)
+
+    # reset velocities to z
+    glob_x0 = glob_x0.flatten()
+    # glob_x0 = np.tile(glob_x0, N)
     nlp.add_option('max_iter', 100)
     nlp.add_option('tol', 1e-6)
     nlp.add_option('print_level', 5)
     nlp.add_option('mu_strategy', 'adaptive')
     nlp.add_option('hessian_approximation', 'limited-memory') # 'exact' or 'limited-memory'
-    nlp.add_option('limited_memory_max_history', 10)
-    nlp.add_option('limited_memory_max_skipping', 2)
+    # nlp.add_option('limited_memory_max_history', 10)
+    # nlp.add_option('limited_memory_max_skipping', 2)
     nlp.add_option('bound_push',1e-6)
-    nlp.add_option('linear_solver', 'mumps')
+    # nlp.add_option('linear_solver', 'mumps')
 
     nlp.add_option('output_file', 'output.log')
 
@@ -462,3 +422,5 @@ for sat in sats:
     # Check correctness of results and indexing operations
     # Could potentially use central difference for the jacobian structure function on penultimate stage
     # Plot the results
+    # Implement recursive case that can take repeated measurements
+    # Handle the case of two satellites not being able to see each other due to the earth being in the way

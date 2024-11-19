@@ -2,7 +2,7 @@
 
 satellites:
   - robot_id: 0
-    state: [6928,0,0,0,0,0]
+    state: [6928,0,0,0,0,7.585163531693988]
     rob_cov_init: 0.25
     dim: 6
     meas_dim: 4
@@ -13,7 +13,7 @@ satellites:
     landmarks: landmark_objects
 
   - robot_id: 1
-    state: [0,6928,0,0,0,0]
+    state: [0,6928,0,0,0,7.585163531693988]
     rob_cov_init: 0.25
     dim: 6
     meas_dim: 4
@@ -24,7 +24,7 @@ satellites:
     landmarks: landmark_objects
   
   - robot_id: 2
-    state: [-6928,0,0,0,0,0]
+    state: [-6928,0,0,0,0,7.585163531693988]
     rob_cov_init: 0.25
     dim: 6
     meas_dim: 5
