@@ -39,27 +39,37 @@ class satellite:
         self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
         self.other_sats_pos = np.zeros((N, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
+        # self.sats_visible = np.zeros((N,n_sats-1)) # Determines whether the other satellites are visible to this satellite
+
 
     def h_landmark(self, x):
         min_landmark = closest_landmark(x,self.landmarks)
         norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
         
         return (x - min_landmark)/norm
-    
+
+
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
         return jnp.linalg.norm(x - sat_pos) 
-       
-    def measure_z_range(self, sats: list) -> np.ndarray:
+
+
+    def measure_z_range(self, index: int, sats: list) -> np.ndarray:
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
-                # TODO: Implement a check to see whether the earth is in the way. Right now we are just measuring the straight line distances, potentially through the earth.
-                d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
-                z = np.append(z,d,axis=0)
+
+                if self.is_visible(sat):
+                    d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
+                    z = np.append(z,d,axis=0)
+                    # self.sats_visible[index,sat.id] = 1
+
+                else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
+                    z = np.append(z,np.array([np.nan]),axis=0)
         return z
     
+
     def measure_z_landmark(self, landmarks: list) -> np.ndarray:
         # Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark
         if self.min_landmark_list is None:
@@ -69,6 +79,20 @@ class satellite:
         
         vec = (self.curr_pos - self.min_landmark_list[-1]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
         return vec/np.linalg.norm(self.curr_pos - self.min_landmark_list[-1])
+
+
+    def is_visible(self, sat: object) -> bool:
+        # Check if the earth is in the way of the two satellites
+        threshold_angle = math.atan(R_EARTH/R_SAT) # Note this is an approximation based on the assumption of a CIRCULAR orbit and earth
+        # Calculate the angle between the two satellites
+        vec = sat.curr_pos - self.curr_pos
+        vec_earth = np.array([0,0,0]) - self.curr_pos
+        # Calculate the angle between the two vectors
+        angle = math.acos(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)))
+        if abs(angle) < threshold_angle:
+            return False
+        
+        return True
     
 
 # Helper function to determine closest landmark to the satellite at the current state position based on Euclidean distance
@@ -94,6 +118,7 @@ def closest_landmark(pos, landmarks: list) -> object:
             closest_landmark = landmark
 
     return closest_landmark.pos
+
 
 def latlon2ecef(landmarks: list) -> np.ndarray:
     """
@@ -128,6 +153,7 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
         ecef = np.append(ecef, np.array([landmark[0],X,Y,Z]), axis=0)
     
     return ecef.reshape(-1,4)
+
 
 # Numerical solution using RK4 method
 def rk4_discretization(x, dt: float):
@@ -165,6 +191,7 @@ def rk4_discretization(x, dt: float):
     # Return the updated state vector
     return jnp.concatenate((r_new, v_new))
 
+
 # Numerical solution of the dynamics using Euler's method
 def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     r = x[0:3]
@@ -172,6 +199,7 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     r_new = r + v*dt
     v_new = v + (-MU/(np.linalg.norm(r)**3))*r*dt
     return np.concatenate((r_new, v_new))
+
 
 ### Landmark Initialization ###
 # Import csv data for the lanldmarks
@@ -204,7 +232,6 @@ state_dim = 6
 x_traj = np.zeros((N, state_dim, n_sats)) # Discretized trajectory of satellite states over time period 
 
 ### Satellite Initialization ###
-
 with open("config.yaml", "r") as file:
     config = yaml.safe_load(file)
 
@@ -241,7 +268,7 @@ for i in range(N):
 
     for sat in sats:
         y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(landmark_objects)) # This sets the bearing measurement
-        y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats)) # This sets the range measurement
+        y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(i, sats)) # This sets the range measurement
 
 # Get the positions of the other satellites for each satellite
 for sat in sats:
@@ -251,8 +278,8 @@ for sat in sats:
             sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
             sat_i += 1
 
-# Solve the problem using cyipopt
 
+# Solve the problem using cyipopt
 for sat in sats: 
     class trajSolver:
         def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim):
@@ -267,7 +294,8 @@ for sat in sats:
             self.cov = self.sat.R_weight*np.eye(3)
             self.inv_cov = jnp.linalg.inv(self.cov)
             self.state_dim = state_dim
-            
+
+
         def objective(self, x):
             obj = 0
             for i in range(self.N):
@@ -275,8 +303,10 @@ for sat in sats:
                 obj += (y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
                 for j in range(3,self.meas_dim):
                     # print(j, y_m[i,j,self.sat.id])
-                    obj += (1/self.sat.R_weight)*(y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+                    if not np.isnan(y_m[i,j,self.sat.id]): # Only add to the objective function if the satellites can measure a range. Otherwise ignore
+                        obj += (1/self.sat.R_weight)*(y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
             return obj
+
 
         def gradient(self, x):
             grad = jax.grad(self.objective)(x)
@@ -350,8 +380,6 @@ for sat in sats:
 
             return np.array(row, dtype=int), np.array(col, dtype=int)
 
-
-        # TODO: Implement the hessian and its structure functions
         # Currently we are still relying on the default hessian approximation which is ok but leads to performance deficits
 
         ### NOTE: HESSIAN IS ONLY CALLED WHEN HESSIAN_APPROXIMATION IS SET TO 'EXACT' ###
@@ -403,10 +431,8 @@ for sat in sats:
     )
 
     # glob_x0 = [1000]*(N*6)
-
-
     glob_x0 = x_traj[:,:,sat.id]
-    # reset velocities to z
+    # reset velocities to align with z-axis
     glob_x0[:,3] = 0.0
     glob_x0[:,4] = 0.0
     glob_x0[:,5] = np.sqrt(MU/R_SAT)
@@ -433,4 +459,3 @@ for sat in sats:
     # TODOs:
     # Plot the results
     # Implement recursive case that can take repeated measurements
-    # Handle the case of two satellites not being able to see each other due to the earth being in the way
