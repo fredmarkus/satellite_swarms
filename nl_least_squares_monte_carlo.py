@@ -31,6 +31,7 @@ class satellite:
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
+        # self.inv_cov = jnp.linalg.inv(self.cov_m)
         
         # self.info_matrix = np.linalg.inv(self.cov_m)
         # self.info_vector = self.info_matrix@self.x_0
@@ -49,12 +50,23 @@ class satellite:
         
         return (x - min_landmark)/norm
 
+    def H_landmark(self, x):
+        # Use jax to autodifferentiate
+        # jac = jax.jacobian(self.h_landmark)(x)
+        min_landmark = closest_landmark(x, self.landmarks)
+        norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
+        jac = jnp.eye(3)/norm - np.outer(x - min_landmark, x - min_landmark)/(norm**3)
+        return jac
 
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
         return jnp.linalg.norm(x - sat_pos) 
 
+    def H_inter_range(self, i, j, x):
+        # vec = [i,j,x]
+        jac = jax.jacobian(self.h_inter_range, argnums=2)(i, j, x)
+        return jac
 
     def measure_z_range(self, index: int, sats: list) -> np.ndarray:
         z = np.empty((0))
@@ -116,7 +128,6 @@ def closest_landmark(pos, landmarks: list) -> object:
         if dist < min_dist:
             min_dist = dist
             closest_landmark = landmark
-
     return closest_landmark.pos
 
 
@@ -200,6 +211,186 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     v_new = v + (-MU/(np.linalg.norm(r)**3))*r*dt
     return np.concatenate((r_new, v_new))
 
+# Trajectory solver class
+class trajSolver:
+    def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim):
+        self.x_traj = x_traj
+        self.y_m = y_m
+        self.sat = sat
+        self.N = N
+        self.meas_dim = meas_dim
+        self.bearing_dim = bearing_dim
+        self.n_sats = n_sats
+        self.MU = MU
+        self.cov = self.sat.R_weight*np.eye(3)
+        self.inv_cov = jnp.linalg.inv(self.cov)
+        self.state_dim = state_dim
+
+    def objective(self, x):
+        obj = 0
+        for i in range(self.N):
+            start_i = i*3
+            obj += (y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
+            for j in range(3,self.meas_dim):
+                # print(j, y_m[i,j,self.sat.id])
+                if not np.isnan(y_m[i,j,self.sat.id]): # Only add to the objective function if the satellites can measure a range. Otherwise ignore
+                    obj += (1/self.sat.R_weight)*(y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+        return obj
+    
+
+    def gradient(self, x):
+        grad = jax.grad(self.objective)(x)
+
+        return grad
+
+    def constraints(self, x):
+        
+        g = jnp.zeros((self.N)*self.state_dim)
+        # Position initial conditions
+        g = g.at[0].set(x[0] - self.sat.x_0[0]) 
+        g = g.at[1].set(x[1] - self.sat.x_0[1])
+        g = g.at[2].set(x[2] - self.sat.x_0[2])
+        # Velocity initial conditions
+        g = g.at[3].set(x[3] - self.sat.x_0[3])
+        g = g.at[4].set(x[4] - self.sat.x_0[4])
+        g = g.at[5].set(x[5] - self.sat.x_0[5])
+
+
+        for i in range(N-1):
+            x_i = x[i*self.state_dim:(i+1)*self.state_dim]
+            x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
+            
+            x_new = rk4_discretization(x_i, dt)
+            g = g.at[(i+1)*self.state_dim:(i+2)*self.state_dim].set(x_new - x_ip1)
+
+        return g
+
+    def jacobian(self, x):
+        jacobian = jax.jacfwd(self.constraints)(x)
+        jacobian = jacobian[self.jrow, self.jcol]
+        
+        return jacobian
+
+    
+    def jacobianstructure(self):
+        dim = 6
+        row = []
+        col = []
+
+        # Initial conditions
+        row.extend([0,1,2,3,4,5])
+        col.extend([0,1,2,3,4,5])
+
+        # Define offsets for the row and col calculations
+        offsets = [
+            (0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6),
+            (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 7),
+            (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 8),
+            (3, 0), (3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 9),
+            (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (4, 10),
+            (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 11)
+        ]
+
+        # Loop over the range and apply the offsets
+        for i in range(0, N-1):
+            for row_offset, col_offset in offsets:
+                row.append((i+1) * dim + row_offset)
+                col.append(i * dim + col_offset)
+    
+        # Visualization of the Jacobian mask. Check it matches the actual Jacobian. Using '11' rather than '1' for easier intepretation
+        # jac = np.zeros((self.N*6,self.N*6))
+        # for i in range(len(row)):
+        #     jac[row[i],col[i]] = 11
+
+        # print(jac)
+        self.jrow = np.array(row, dtype=int)
+        self.jcol = np.array(col, dtype=int)
+
+        return np.array(row, dtype=int), np.array(col, dtype=int)
+
+    # Currently we are still relying on the default hessian approximation which is ok but leads to performance deficits
+
+    ### NOTE: HESSIAN IS ONLY CALLED WHEN HESSIAN_APPROXIMATION IS SET TO 'EXACT' ###
+    def hessian(self, x, lagrange, obj_factor):
+        hess = obj_factor*jax.hessian(self.objective)(x)
+        hess3d = jax.hessian(self.constraints)(x)
+        hess2 = np.tensordot(hess3d, lagrange, axes=([2], [0]))
+        hess_final = hess + hess2
+        hess_final = hess_final[self.hrow, self.hcol]
+        return hess_final
+
+    def hessianstructure(self):
+        half_dim = 3
+        row = []
+        col = []
+
+        offsets = [
+            (0, 0), 
+            (1, 0), (1, 1),
+            (2, 0), (2, 1), (2, 2)                
+        ]
+
+        for i in range(0, N):
+            for row_offset, col_offset in offsets:
+                row.append(i * half_dim + row_offset)
+                col.append(i * half_dim + col_offset)
+    
+        hess = np.zeros((self.N*6,self.N*6))
+        for i in range(len(row)):
+            hess[row[i],col[i]] = 11
+
+        # print(hess)
+        self.hrow = np.array(row, dtype=int)
+        self.hcol = np.array(col, dtype=int)
+
+        return np.array(row, dtype=int), np.array(col, dtype=int)
+
+# Function to solve the non-linear least squares problem
+def solve_nls(x_traj, nlp, sat_id):
+    # Randomize initia; guess
+    glob_x0 = x_traj[:,:,sat_id] + np.random.normal(loc=0,scale=math.sqrt(R_weight),size=(N,state_dim))
+    # glob_x0[:,3] = 0.0
+    # glob_x0[:,4] = 0.0
+    # glob_x0[:,5] = np.sqrt(MU/R_SAT)
+    glob_x0 = glob_x0.flatten()
+
+    nlp.add_option('max_iter', 100)
+    nlp.add_option('tol', 1e-6)
+    nlp.add_option('print_level', 5)
+    nlp.add_option('mu_strategy', 'adaptive')
+    nlp.add_option('hessian_approximation', 'limited-memory') # 'exact' or 'limited-memory'
+    nlp.add_option('linear_solver', 'mumps')
+    # nlp.add_option('limited_memory_max_history', 10)
+    # nlp.add_option('limited_memory_max_skipping', 2)
+    # nlp.add_option('bound_push',1e-6)
+    # nlp.add_option('output_file', 'output.log')
+
+
+    x, _ = nlp.solve(glob_x0)
+
+    return x
+
+def compute_fim():
+    pass
+
+## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
+#General Parameters
+N = 1
+f = 1 #Hz
+dt = 1/f
+n_sats = 1
+R_weight = 1
+bearing_dim = 3
+meas_dim = n_sats-1 + bearing_dim
+R = np.eye(meas_dim)*R_weight
+state_dim = 6
+
+#MC Parameters
+num_trials = 20
+nls_estimates = np.zeros((num_trials, state_dim * N))
+
+# Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
+# np.random.seed(42)        #Set seed for reproducibility
 
 ### Landmark Initialization ###
 # Import csv data for the lanldmarks
@@ -217,19 +408,6 @@ landmark_objects = []
 for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
-#Parameters
-N = 20
-f = 1 #Hz
-dt = 1/f
-n_sats = 3
-R_weight = 0.1
-bearing_dim = 3
-meas_dim = n_sats-1 + bearing_dim
-R = np.eye(meas_dim)*R_weight
-state_dim = 6
-
-
-x_traj = np.zeros((N, state_dim, n_sats)) # Discretized trajectory of satellite states over time period 
 
 ### Satellite Initialization ###
 with open("config.yaml", "r") as file:
@@ -250,171 +428,41 @@ for sat_config in config["satellites"]:
 
 
 # Generate synthetic data
-np.random.seed(0)        # For reproducibility
-
+x_traj = np.zeros((N, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
+# This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
 for sat in sats: 
     x = sat.x_0
     for i in range(N):
         x_traj[i,:,sat.id] = x
         x = rk4_discretization(x, dt)
 
+# NOTE: We are only doing these trials for one satellites (for now)
 
-y_m = jnp.zeros((N,meas_dim,n_sats))
 
-for i in range(N):
+for trial in range(num_trials):
 
+    y_m = jnp.zeros((N,meas_dim,n_sats))
+
+    for i in range(N):
+
+        for sat in sats:
+            sat.curr_pos = x_traj[i,0:3,sat.id]
+
+        for sat in sats:
+            y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
+            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(i, sats)) # This sets the range measurement
+
+    # Get the positions of the other satellites for each satellite at all N timesteps
     for sat in sats:
-        sat.curr_pos = x_traj[i,0:3,sat.id]
+        sat_i = 0 #iterator variable
+        for other_sat in sats:
+            if sat.id != other_sat.id:
+                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
+                sat_i += 1
 
-    for sat in sats:
-        y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(landmark_objects)) # This sets the bearing measurement
-        y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(i, sats)) # This sets the range measurement
-
-# Get the positions of the other satellites for each satellite
-for sat in sats:
-    sat_i = 0 #iterator variable
-    for other_sat in sats:
-        if sat.id != other_sat.id:
-            sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
-            sat_i += 1
-
-
-# Solve the problem using cyipopt
-for sat in sats: 
-    class trajSolver:
-        def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim):
-            self.x_traj = x_traj
-            self.y_m = y_m
-            self.sat = sat
-            self.N = N
-            self.meas_dim = meas_dim
-            self.bearing_dim = bearing_dim
-            self.n_sats = n_sats
-            self.MU = MU
-            self.cov = self.sat.R_weight*np.eye(3)
-            self.inv_cov = jnp.linalg.inv(self.cov)
-            self.state_dim = state_dim
-
-        def objective(self, x):
-            obj = 0
-            for i in range(self.N):
-                start_i = i*3
-                obj += (y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
-                for j in range(3,self.meas_dim):
-                    # print(j, y_m[i,j,self.sat.id])
-                    if not np.isnan(y_m[i,j,self.sat.id]): # Only add to the objective function if the satellites can measure a range. Otherwise ignore
-                        obj += (1/self.sat.R_weight)*(y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
-            return obj
-
-        def gradient(self, x):
-            grad = jax.grad(self.objective)(x)
-
-            return grad
-
-        def constraints(self, x):
-            
-            g = jnp.zeros((self.N)*self.state_dim)
-            # Position initial conditions
-            g = g.at[0].set(x[0] - self.sat.x_0[0]) 
-            g = g.at[1].set(x[1] - self.sat.x_0[1])
-            g = g.at[2].set(x[2] - self.sat.x_0[2])
-            # Velocity initial conditions
-            g = g.at[3].set(x[3] - self.sat.x_0[3])
-            g = g.at[4].set(x[4] - self.sat.x_0[4])
-            g = g.at[5].set(x[5] - self.sat.x_0[5])
-
-
-            for i in range(N-1):
-                x_i = x[i*self.state_dim:(i+1)*self.state_dim]
-                x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
-                
-                x_new = rk4_discretization(x_i, dt)
-                g = g.at[(i+1)*self.state_dim:(i+2)*self.state_dim].set(x_new - x_ip1)
-
-            return g
-
-        def jacobian(self, x):
-            jacobian = jax.jacfwd(self.constraints)(x)
-            jacobian = jacobian[self.jrow, self.jcol]
-            
-            return jacobian
-
-        
-        def jacobianstructure(self):
-            dim = 6
-            row = []
-            col = []
-
-            # Initial conditions
-            row.extend([0,1,2,3,4,5])
-            col.extend([0,1,2,3,4,5])
-
-            # Define offsets for the row and col calculations
-            offsets = [
-                (0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6),
-                (1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 7),
-                (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (2, 8),
-                (3, 0), (3, 1), (3, 2), (3, 3), (3, 4), (3, 5), (3, 9),
-                (4, 0), (4, 1), (4, 2), (4, 3), (4, 4), (4, 5), (4, 10),
-                (5, 0), (5, 1), (5, 2), (5, 3), (5, 4), (5, 5), (5, 11)
-            ]
-
-            # Loop over the range and apply the offsets
-            for i in range(0, N-1):
-                for row_offset, col_offset in offsets:
-                    row.append((i+1) * dim + row_offset)
-                    col.append(i * dim + col_offset)
-       
-            # Visualization of the Jacobian mask. Check it matches the actual Jacobian. Using '11' rather than '1' for easier intepretation
-            # jac = np.zeros((self.N*6,self.N*6))
-            # for i in range(len(row)):
-            #     jac[row[i],col[i]] = 11
-
-            # print(jac)
-            self.jrow = np.array(row, dtype=int)
-            self.jcol = np.array(col, dtype=int)
-
-            return np.array(row, dtype=int), np.array(col, dtype=int)
-
-        # Currently we are still relying on the default hessian approximation which is ok but leads to performance deficits
-
-        ### NOTE: HESSIAN IS ONLY CALLED WHEN HESSIAN_APPROXIMATION IS SET TO 'EXACT' ###
-        def hessian(self, x, lagrange, obj_factor):
-            hess = obj_factor*jax.hessian(self.objective)(x)
-            hess3d = jax.hessian(self.constraints)(x)
-            hess2 = np.tensordot(hess3d, lagrange, axes=([2], [0]))
-            hess_final = hess + hess2
-            hess_final = hess_final[self.hrow, self.hcol]
-            return hess_final
-
-        def hessianstructure(self):
-            half_dim = 3
-            row = []
-            col = []
-
-            offsets = [
-                (0, 0), 
-                (1, 0), (1, 1),
-                (2, 0), (2, 1), (2, 2)                
-            ]
-
-            for i in range(0, N):
-                for row_offset, col_offset in offsets:
-                    row.append(i * half_dim + row_offset)
-                    col.append(i * half_dim + col_offset)
-       
-            hess = np.zeros((self.N*6,self.N*6))
-            for i in range(len(row)):
-                hess[row[i],col[i]] = 11
-
-            # print(hess)
-            self.hrow = np.array(row, dtype=int)
-            self.hcol = np.array(col, dtype=int)
-
-            return np.array(row, dtype=int), np.array(col, dtype=int)
-
-        
-    solver = trajSolver(x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim)
+    # Initialize the solver 
+    # SOLVING ALWAYS WITH FIRST SATELLITE!!!
+    solver = trajSolver(x_traj=x_traj, y_m=y_m, sat=sats[0], N=N, meas_dim=meas_dim, bearing_dim=bearing_dim, n_sats=n_sats, MU=MU, state_dim=state_dim)
     nlp = cyipopt.Problem(
         n = N*state_dim,
         m = N*state_dim,
@@ -423,37 +471,60 @@ for sat in sats:
         ub = jnp.full(N*state_dim,np.inf),
         cu = jnp.zeros(N*state_dim),
         cl = jnp.zeros(N*state_dim),
-
     )
 
-    # glob_x0 = [1000]*(N*6)
-    glob_x0 = x_traj[:,:,sat.id]
-    # reset velocities to align with z-axis
-    glob_x0[:,3] = 0.0
-    glob_x0[:,4] = 0.0
-    glob_x0[:,5] = np.sqrt(MU/R_SAT)
 
-    # reset velocities to z
-    glob_x0 = glob_x0.flatten()
-    # glob_x0 = np.tile(glob_x0, N)
-    nlp.add_option('max_iter', 100)
-    nlp.add_option('tol', 1e-6)
-    nlp.add_option('print_level', 5)
-    nlp.add_option('mu_strategy', 'adaptive')
-    nlp.add_option('hessian_approximation', 'limited-memory') # 'exact' or 'limited-memory'
-    # nlp.add_option('limited_memory_max_history', 10)
-    # nlp.add_option('limited_memory_max_skipping', 2)
-    # nlp.add_option('bound_push',1e-6)
-    nlp.add_option('linear_solver', 'mumps')
-
-    # nlp.add_option('output_file', 'output.log')
-
-    x, info = nlp.solve(glob_x0)
-    # print(info)
-    print(solver.jacobian(x))  
-    print("done")
+    x = solve_nls(x_traj, nlp, sat_id=0)
+    nls_estimates[trial] = x
 
 
-    # TODOs:
-    # Plot the results
-    # Implement recursive case that can take repeated measurements
+
+# Generate the Jacobian for FIM
+x_tru = x_traj[:,:,0].flatten()
+
+# TODO: use a sparse matrix for the jacobian via scipy
+jacobian = np.zeros((N*meas_dim, N*state_dim))
+for i in range(N):
+    start_i = i * state_dim
+    # Landmark measurements
+    jacobian[i*meas_dim : i*meas_dim + 3, start_i:start_i + 3] = sats[0].H_landmark(x_tru[start_i:start_i + 3])
+    # Inter-range measurements
+    for j in range(3, meas_dim):
+        # Check ig the measurement is nan
+        if not np.isnan(y_m[i,j,0]):
+            measurement_idx = i * meas_dim + j
+            jacobian[measurement_idx, start_i:start_i + 3] = sats[0].H_inter_range(i, j, x_tru[start_i:start_i + 3])
+
+
+W = np.zeros((N*meas_dim, N*meas_dim))
+for i in range(N):
+    # Landmark measurements
+    W[i*meas_dim : i*meas_dim + 3, i*meas_dim : i*meas_dim + 3] = np.eye(3) * (1/ sats[0].R_weight)
+    # Inter-range measurements
+    for j in range(3, meas_dim):
+        measurement_idx = i * meas_dim + j
+        W[measurement_idx, measurement_idx] = 1 / sats[0].R_weight
+
+fim = jacobian.T@W@jacobian
+    
+# regularization_factor = 1e-6
+# fim += regularization_factor * np.eye(fim.shape[0])
+crb = np.linalg.inv(fim)
+# crb = np.linalg.pinv(fim)
+
+
+#Compute sample covariance matrix for all parameters
+sample_cov = np.cov(nls_estimates, rowvar=False)
+# print("Sample Covariance Matrix:")
+print(sample_cov)
+print("Cramer-Rao Bound:")
+print(np.trace(crb))
+
+print("Sample Covariance Matrix:")
+print(np.trace(sample_cov))
+
+    
+    
+# # TODOs:
+# # Plot the results
+# # Implement recursive case that can take repeated measurements
