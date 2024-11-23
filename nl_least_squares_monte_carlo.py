@@ -52,16 +52,20 @@ class satellite:
 
     def H_landmark(self, x):
         # Use jax to autodifferentiate
-        # jac = jax.jacobian(self.h_landmark)(x)
-        min_landmark = closest_landmark(x, self.landmarks)
-        norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
-        jac = jnp.eye(3)/norm - np.outer(x - min_landmark, x - min_landmark)/(norm**3)
+        jac = jax.jacobian(self.h_landmark)(x)
+        # min_landmark = closest_landmark(x, self.landmarks)
+        # norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
+        # jac = jnp.eye(3)/norm - np.outer(x - min_landmark, x - min_landmark)/(norm**3)
         return jac
 
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
-        return jnp.linalg.norm(x - sat_pos) 
+        if self.is_visible(sat_pos):
+            print(f"satellite {self.id} can see satellite {sat_id}")
+            return jnp.linalg.norm(x - sat_pos) 
+        else:
+            return jnp.linalg.norm(0)
 
     def H_inter_range(self, i, j, x):
         # vec = [i,j,x]
@@ -73,8 +77,9 @@ class satellite:
         for sat in sats:
             if sat.id != self.id:
 
-                if self.is_visible(sat):
-                    d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
+                if self.is_visible(sat.curr_pos): # If the earth is not in the way, we can measure the range
+                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
+                    d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
                     # self.sats_visible[index,sat.id] = 1
 
@@ -89,15 +94,16 @@ class satellite:
         else:
             self.min_landmark_list = np.append(self.min_landmark_list,[closest_landmark(self.curr_pos, landmarks)],axis=0)
         
-        vec = (self.curr_pos - self.min_landmark_list[-1]) + np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-        return vec/np.linalg.norm(self.curr_pos - self.min_landmark_list[-1])
+        noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
+        vec = (self.curr_pos  - self.min_landmark_list[-1]) + noise
+        return vec/np.linalg.norm(vec)
 
 
-    def is_visible(self, sat: object) -> bool:
+    def is_visible(self, sat_pos) -> bool:
         # Check if the earth is in the way of the two satellites
         threshold_angle = math.atan(R_EARTH/R_SAT) # Note this is an approximation based on the assumption of a CIRCULAR orbit and earth
         # Calculate the angle between the two satellites
-        vec = sat.curr_pos - self.curr_pos
+        vec = sat_pos - self.curr_pos
         vec_earth = np.array([0,0,0]) - self.curr_pos
         # Calculate the angle between the two vectors
         angle = math.acos(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)))
@@ -128,6 +134,8 @@ def closest_landmark(pos, landmarks: list) -> object:
         if dist < min_dist:
             min_dist = dist
             closest_landmark = landmark
+
+    # print(f"Closest landmark to satellite at position {pos} is {closest_landmark.name} at position {closest_landmark.pos}")
     return closest_landmark.pos
 
 
@@ -229,8 +237,12 @@ class trajSolver:
     def objective(self, x):
         obj = 0
         for i in range(self.N):
-            start_i = i*3
+            start_i = i*6
+            start_i1 = (i+1)*6
             obj += (y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
+            # add the dynamics to the objective
+            if i < self.N-1: # Don't add the dynamics optimization for the last time step
+                obj += (x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], dt))@(x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], dt))
             for j in range(3,self.meas_dim):
                 # print(j, y_m[i,j,self.sat.id])
                 if not np.isnan(y_m[i,j,self.sat.id]): # Only add to the objective function if the satellites can measure a range. Otherwise ignore
@@ -370,23 +382,26 @@ def solve_nls(x_traj, nlp, sat_id):
 
     return x
 
-def compute_fim():
-    pass
+def state_transition(x):
+    I = np.eye(3)
+    A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5)
+    A = np.block([[np.zeros((3,3)), I], [A21, np.zeros((3,3))]])
+    return A
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 1
-f = 1 #Hz
+N = 90
+f = 1/60 #Hz
 dt = 1/f
-n_sats = 1
-R_weight = 1
+n_sats = 4
+R_weight = 0.1
 bearing_dim = 3
 meas_dim = n_sats-1 + bearing_dim
 R = np.eye(meas_dim)*R_weight
 state_dim = 6
 
 #MC Parameters
-num_trials = 20
+num_trials = 50
 nls_estimates = np.zeros((num_trials, state_dim * N))
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
@@ -436,8 +451,45 @@ for sat in sats:
         x_traj[i,:,sat.id] = x
         x = rk4_discretization(x, dt)
 
+# Get the positions of the other satellites for each satellite at all N timesteps
+for sat in sats:
+        sat_i = 0 #iterator variable
+        for other_sat in sats:
+            if sat.id != other_sat.id:
+                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
+                sat_i += 1
+
 # NOTE: We are only doing these trials for one satellites (for now)
 
+# Generate the Jacobian for FIM
+x_true = x_traj[:,:,0]
+
+
+## Calculate FIM directly
+fim = np.zeros((N*state_dim, N*state_dim))
+f_prior = np.zeros((state_dim, state_dim))
+f_post = np.zeros((state_dim, state_dim))
+
+J = np.zeros((meas_dim, state_dim))
+R_inv = np.linalg.inv(R)
+
+for i in range(1,N):
+    #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
+    start_i = i * state_dim
+    A = state_transition(x_true[i-1,:])
+    f_prior = A@f_post@A.T # No process noise
+    J[0:bearing_dim,0:3] = sats[0].H_landmark(x_true[i,0:3])
+    for j in range(3,meas_dim): ## Consider checks for nan values
+        J[j,0:3] = sats[0].H_inter_range(i, j, x_true[i,0:3])
+    f_post = f_prior + J.T@R_inv@J
+    fim[start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
+
+fim = np.diag(fim).reshape(-1,6)
+print(np.diag(fim).reshape(-1,6))
+plt.plot(fim[:,0], label='x', color='green')
+plt.plot(fim[:,1], label='y', color='red',linestyle='dashed')
+plt.plot(fim[:,2], label='z', color='blue',linestyle='dotted')
+plt.show()
 
 for trial in range(num_trials):
 
@@ -452,13 +504,6 @@ for trial in range(num_trials):
             y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
             y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(i, sats)) # This sets the range measurement
 
-    # Get the positions of the other satellites for each satellite at all N timesteps
-    for sat in sats:
-        sat_i = 0 #iterator variable
-        for other_sat in sats:
-            if sat.id != other_sat.id:
-                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
-                sat_i += 1
 
     # Initialize the solver 
     # SOLVING ALWAYS WITH FIRST SATELLITE!!!
@@ -479,52 +524,7 @@ for trial in range(num_trials):
 
 
 
-# Generate the Jacobian for FIM
-x_tru = x_traj[:,:,0].flatten()
-
-# TODO: use a sparse matrix for the jacobian via scipy
-jacobian = np.zeros((N*meas_dim, N*state_dim))
-for i in range(N):
-    start_i = i * state_dim
-    # Landmark measurements
-    jacobian[i*meas_dim : i*meas_dim + 3, start_i:start_i + 3] = sats[0].H_landmark(x_tru[start_i:start_i + 3])
-    # Inter-range measurements
-    for j in range(3, meas_dim):
-        # Check ig the measurement is nan
-        if not np.isnan(y_m[i,j,0]):
-            measurement_idx = i * meas_dim + j
-            jacobian[measurement_idx, start_i:start_i + 3] = sats[0].H_inter_range(i, j, x_tru[start_i:start_i + 3])
-
-
-W = np.zeros((N*meas_dim, N*meas_dim))
-for i in range(N):
-    # Landmark measurements
-    W[i*meas_dim : i*meas_dim + 3, i*meas_dim : i*meas_dim + 3] = np.eye(3) * (1/ sats[0].R_weight)
-    # Inter-range measurements
-    for j in range(3, meas_dim):
-        measurement_idx = i * meas_dim + j
-        W[measurement_idx, measurement_idx] = 1 / sats[0].R_weight
-
-fim = jacobian.T@W@jacobian
-    
-# regularization_factor = 1e-6
-# fim += regularization_factor * np.eye(fim.shape[0])
-crb = np.linalg.inv(fim)
-# crb = np.linalg.pinv(fim)
-
-
 #Compute sample covariance matrix for all parameters
-sample_cov = np.cov(nls_estimates, rowvar=False)
-# print("Sample Covariance Matrix:")
-print(sample_cov)
-print("Cramer-Rao Bound:")
-print(np.trace(crb))
+# sample_var = np.var(nls_estimates, axis=0)
 
-print("Sample Covariance Matrix:")
-print(np.trace(sample_cov))
-
-    
-    
-# # TODOs:
-# # Plot the results
-# # Implement recursive case that can take repeated measurements
+# print("sample var", sample_var)
