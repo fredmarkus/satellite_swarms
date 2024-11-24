@@ -241,8 +241,8 @@ R = np.eye(meas_dim)*R_weight
 Q = np.eye(state_dim)*Q_weight
 
 #MC Parameters
-num_trials = 4
-parallelize = False
+num_trials = 10
+parallelize = True
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
 # np.random.seed(42)        #Set seed for reproducibility
