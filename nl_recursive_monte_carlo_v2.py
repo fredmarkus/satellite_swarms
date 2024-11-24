@@ -232,10 +232,10 @@ def state_transition(x):
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 300
+N = 200
 f = 1/60 #Hz
 dt = 1/f
-n_sats = 3
+n_sats = 2
 R_weight = 1
 Q_weight = 1
 bearing_dim = 3
@@ -245,7 +245,7 @@ R = np.eye(meas_dim)*R_weight
 Q = np.eye(state_dim)*Q_weight
 
 #MC Parameters
-num_trials = 15
+num_trials = 3
 nls_estimates = np.zeros((num_trials, state_dim * N))
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
@@ -307,7 +307,7 @@ for sat in sats:
 
 
 ## Calculate FIM directly in recursive fashion.
-fim = np.zeros((N*state_dim, N*state_dim))
+fim = np.zeros((num_trials,N*state_dim, N*state_dim))
 f_prior = np.zeros((state_dim, state_dim))
 f_post = np.zeros((state_dim, state_dim))
 
@@ -357,18 +357,20 @@ for trial in range(num_trials):
         #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
         if i > 0:
             start_i = i * state_dim
-            A = state_transition(sats[0].x_m)
+            A = state_transition(sats_copy[0].x_m)
             f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
-            J[0:bearing_dim,0:3] = sats[0].H_landmark(sats[0].x_m[0:3])
+            J[0:bearing_dim,0:3] = sats_copy[0].H_landmark(sats_copy[0].x_m[0:3])
             for j in range(3,meas_dim): ## Consider checks for nan values
-                J[j,0:3] = sats[0].H_inter_range(i, j, sats[0].x_m[0:3])
+                J[j,0:3] = sats_copy[0].H_inter_range(i, j, sats_copy[0].x_m[0:3])
             f_post = f_prior + J.T@R_inv@J
-            fim[start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
+            fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
 
             # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
     
     sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
 
+# Average FIM
+fim = np.mean(fim, axis=0)
 
 #Get the average covariance matrix for each satellite for each timestep
 for i in range(N):
@@ -399,10 +401,3 @@ plt.xlabel('Timestep')
 # plt.ylabel('Covariance')
 plt.legend()
 plt.show()
-
-
-
-
-
-
-
