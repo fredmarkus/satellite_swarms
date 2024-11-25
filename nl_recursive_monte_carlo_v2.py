@@ -21,15 +21,13 @@ class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Chec
 
 class satellite:
 
-    def __init__(self, state: np.ndarray, rob_cov_init: float, robot_id: int, dim: int, meas_dim: int, Q_weight: float, R_weight: float, N: int, n_sats: int, landmarks: object) -> None:
+    def __init__(self, state: np.ndarray, pos_cov_init: float, vel_cov_init: float, robot_id: int, dim: int, meas_dim: int, R_weight: float, N: int, n_sats: int, landmarks: object) -> None:
         self.x_0 = state
-        self.cov_m = rob_cov_init*np.eye(dim)
-        self.cov_p = self.cov_m
+        self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
         self.meas_dim = meas_dim
         self.R_weight = R_weight # This is the variance weight for the measurement noise
-        self.Q_weight = Q_weight # This is the variance weight for the process noise
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
@@ -37,7 +35,7 @@ class satellite:
         
         # self.info_matrix = np.linalg.inv(self.cov_m)
         # self.info_vector = self.info_matrix@self.x_0
-        self.x_m = self.x_0 # Initialize the measurement vector exactly the same as the initial state vector
+        self.x_m = self.x_0 # + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         self.x_p = self.x_m # Initialize the prior vector exactly the same as the measurement vector
         self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
 
@@ -86,6 +84,7 @@ class satellite:
                     # self.sats_visible[index,sat.id] = 1
 
                 else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
+                   
                     z = np.append(z,np.array([0]),axis=0)
         return z
     
@@ -232,20 +231,21 @@ def state_transition(x):
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 200
+N = 95
 f = 1/60 #Hz
 dt = 1/f
 n_sats = 2
-R_weight = 1
-Q_weight = 1
+R_weight = 10e-2
 bearing_dim = 3
 state_dim = 6
 meas_dim = n_sats-1 + bearing_dim
 R = np.eye(meas_dim)*R_weight
-Q = np.eye(state_dim)*Q_weight
+# Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
+# page 6
+Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
 #MC Parameters
-num_trials = 3
+num_trials = 4
 nls_estimates = np.zeros((num_trials, state_dim * N))
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
@@ -317,6 +317,8 @@ R_inv = np.linalg.inv(R)
 cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
 sats_copy = copy.deepcopy(sats)
 
+filter_position = np.zeros((num_trials, N, 3, n_sats))
+
 
 for trial in range(num_trials):
     print("Monte Carlo Trial: ", trial)
@@ -328,7 +330,8 @@ for trial in range(num_trials):
     for i in range(N):
 
         for sat in sats_copy:
-        #     sat.curr_pos = x_traj[i,0:3,sat.id]
+            if i < N-1:
+                sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
             A = state_transition(sat.x_m)
             sat.x_p = rk4_discretization(sat.x_m, dt)
             sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
@@ -342,7 +345,7 @@ for trial in range(num_trials):
             K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
 
             y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
-            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(i, sats)) # This sets the range measurement
+            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(i, sats_copy)) # This sets the range measurement
 
             h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
             for j in range(3,meas_dim):
@@ -352,6 +355,8 @@ for trial in range(num_trials):
             sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
 
             cov_hist[i,sat.id,:,:] += sat.cov_m
+
+            filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
 
 
         #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
@@ -379,20 +384,28 @@ for i in range(N):
 
 sat1_cov_hist = cov_hist[:,0,:,:]
 
-# Plot the covariance matrix entries and the FI. 
+# The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
+# fim_acc = fim[state_dim:,state_dim:]
+# crb = np.linalg.inv(fim_acc)
+# crb_final = np.zeros((N*state_dim,N*state_dim))
+# crb_final[state_dim:,state_dim:] = crb
 
+# Using pseudo-inverse to invert the matrix
 crb = np.linalg.pinv(fim)
+
+# Plot the covariance matrix and the FIM diagonal entries.
+
 crb_diag = np.diag(crb)
 plt.figure()
-plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
-plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
-plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
+# plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
+# plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
+# plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
 # plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
 # plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
 # plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')
-plt.plot(sat1_cov_hist[:,0,0], label='x position Covariance', color='red', linestyle='--')
-plt.plot(sat1_cov_hist[:,1,1], label='y position Covariance', color='blue', linestyle='--')
-plt.plot(sat1_cov_hist[:,2,2], label='z position Covariance', color='green', linestyle='--')
+plt.plot(sat1_cov_hist[1:,0,0], label='x position Covariance', color='red', linestyle='--')
+plt.plot(sat1_cov_hist[1:,1,1], label='y position Covariance', color='blue', linestyle='--')
+plt.plot(sat1_cov_hist[1:,2,2], label='z position Covariance', color='green', linestyle='--')
 # plt.plot(sat1_cov_hist[:,3,3], label='x velocity Covariance', color='red', linestyle='--')
 # plt.plot(sat1_cov_hist[:,4,4], label='y velocity Covariance', color='blue', linestyle='--')
 # plt.plot(sat1_cov_hist[:,5,5], label='z velocity Covariance', color='green', linestyle='--')
@@ -400,4 +413,39 @@ plt.title('Covariance Matrix and CRB for Satellite 1 ')
 plt.xlabel('Timestep')
 # plt.ylabel('Covariance')
 plt.legend()
+# plt.show()
+
+
+fig = plt.figure(figsize=(10, 10))
+ax = fig.add_subplot(111, projection='3d')
+
+scatter = ax.scatter(x_traj[:,0,0], x_traj[:,1,0], x_traj[:,2,0], cmap='coolwarm')
+scatter = ax.scatter(np.mean(filter_position, axis=0)[:,0,0], np.mean(filter_position, axis=0)[:,1,0], np.mean(filter_position, axis=0)[:,2,0], cmap='viridis')
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('Z')
+plt.title('Position Groundtruth for Satellite 1 ')
 plt.show()
+
+# Plot the positional error
+# plt.figure()
+# error_x = np.square(np.mean(filter_position, axis=0)[:,0,0] - np.mean(filter_position, axis=0)[:,0,0])
+# error_y = np.square(np.mean(filter_position, axis=0)[:,1,0] - np.mean(filter_position, axis=0)[:,1,0])
+# error_z = np.square(np.mean(filter_position, axis=0)[:,2,0] - np.mean(filter_position, axis=0)[:,2,0])
+# error_y = filter_position[0,:,1,0] - x_traj[:,1,0]
+# error_z = filter_position[0,:,2,0] - x_traj[:,2,0]
+
+# plt.plot(filter_position[0,:,0,0], label='x position', color='red')
+# plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
+# plt.plot(filter_position[0,:,2,0], label='z position', color='green')
+# plt.plot(x_traj[:,0,0], label='x position truth', color='red', linestyle='--')
+# plt.plot(x_traj[:,1,0], label='y position truth', color='blue', linestyle='--')
+# plt.plot(x_traj[:,2,0], label='z position truth', color='green', linestyle='--')
+
+# # plt.plot(error_x, label='x position error', color='red')
+# # plt.plot(error_y, label='y position error', color='blue')
+# # plt.plot(error_z, label='z position error', color='green')
+# plt.title('Position Groundtruth for Satellite 1 ')
+# plt.xlabel('Timestep')
+# plt.legend()
+# plt.show()

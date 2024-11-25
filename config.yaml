@@ -3,44 +3,44 @@
 satellites:
   - robot_id: 0
     state: [6928,0,0,0,0,7.585163531693988]
-    rob_cov_init: 0.25
+    pos_cov_init: 0.001
+    vel_cov_init: 0.00001
     dim: 6
     meas_dim: 4
-    R_weight: 0.25
-    Q_weight: 0.25
+    R_weight: 10e-5
     N: N
     n_sats: 2
     landmarks: landmark_objects
 
   - robot_id: 1
-    state: [0,6928,0,0,0,7.585163531693988]
-    rob_cov_init: 0.25
+    state: [0,6928,0,0,0,-7.585163531693988]
+    pos_cov_init: 0.001
+    vel_cov_init: 0.00001
     dim: 6
     meas_dim: 4
-    R_weight: 0.25
-    Q_weight: 0.25
+    R_weight: 10e-5
     N: N
     n_sats: 2
     landmarks: landmark_objects
   
   # - robot_id: 2
-  #   state: [-6928,0,0,0,0,7.585163531693988]
-  #   rob_cov_init: 0.25
+  #   state: [4898,4898,0,0,0,-7.585163531693988]
+  #   pos_cov_init: 0.001
+  #   vel_cov_init: 0.000001
   #   dim: 6
-  #   meas_dim: 5
-  #   R_weight: 0.25
-  #   Q_weight: 0.25
+  #   meas_dim: 4
+  #   R_weight: 10e-5
   #   N: N
   #   n_sats: 2
   #   landmarks: landmark_objects
 
   # - robot_id: 3
   #   state: [0,-6928,0,0,0,-7.585163531693988]
-  #   rob_cov_init: 0.25
+  #   pos_cov_init: 1
+  #   vel_cov_init: 1
   #   dim: 6
   #   meas_dim: 5
   #   R_weight: 0.25
-  #   Q_weight: 0.25
   #   N: N
   #   n_sats: 2
   #   landmarks: landmark_objects
