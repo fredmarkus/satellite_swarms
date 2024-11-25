@@ -35,6 +35,7 @@ class satellite:
         
         # self.info_matrix = np.linalg.inv(self.cov_m)
         # self.info_vector = self.info_matrix@self.x_0
+        # TODO: Adjust initial x_m with random error direction for both position and velocity (different scales)
         self.x_m = self.x_0 # + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         self.x_p = self.x_m # Initialize the prior vector exactly the same as the measurement vector
         self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
@@ -231,7 +232,7 @@ def state_transition(x):
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 95
+N = 1500
 f = 1/60 #Hz
 dt = 1/f
 n_sats = 2
@@ -245,7 +246,7 @@ R = np.eye(meas_dim)*R_weight
 Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
 #MC Parameters
-num_trials = 4
+num_trials = 1
 nls_estimates = np.zeros((num_trials, state_dim * N))
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
@@ -397,9 +398,9 @@ crb = np.linalg.pinv(fim)
 
 crb_diag = np.diag(crb)
 plt.figure()
-# plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
-# plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
-# plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
+plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
+plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
+plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
 # plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
 # plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
 # plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')
@@ -418,13 +419,33 @@ plt.legend()
 
 fig = plt.figure(figsize=(10, 10))
 ax = fig.add_subplot(111, projection='3d')
+time = np.linspace(0, 1, N)  # Normalized time from 0 to 1
+scatter1 = ax.scatter(
+    x_traj[:,0,0], 
+    x_traj[:,1,0], 
+    x_traj[:,2,0],
+    c=time,
+    cmap='viridis',  # Sequential colormap
+    label='Trajectory',
+    marker='o'
+)
+scatter2 = ax.scatter(
+    np.mean(filter_position, axis=0)[:,0,0], 
+    np.mean(filter_position, axis=0)[:,1,0],
+    np.mean(filter_position, axis=0)[:,2,0], 
+    c=time,
+    cmap='plasma',  # Another sequential colormap
+    label='Filtered Position',
+    marker='^'
+)
+cbar = plt.colorbar(scatter2, ax=ax, shrink=0.5, aspect=10)
+cbar.set_label('Normalized Time')
 
-scatter = ax.scatter(x_traj[:,0,0], x_traj[:,1,0], x_traj[:,2,0], cmap='coolwarm')
-scatter = ax.scatter(np.mean(filter_position, axis=0)[:,0,0], np.mean(filter_position, axis=0)[:,1,0], np.mean(filter_position, axis=0)[:,2,0], cmap='viridis')
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
 ax.set_zlabel('Z')
 plt.title('Position Groundtruth for Satellite 1 ')
+plt.legend()
 plt.show()
 
 # Plot the positional error
