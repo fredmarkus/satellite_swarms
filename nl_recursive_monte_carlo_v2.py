@@ -232,7 +232,7 @@ def state_transition(x):
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 1500
+N = 300
 f = 1/60 #Hz
 dt = 1/f
 n_sats = 2
@@ -246,7 +246,7 @@ R = np.eye(meas_dim)*R_weight
 Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
 #MC Parameters
-num_trials = 1
+num_trials = 10
 nls_estimates = np.zeros((num_trials, state_dim * N))
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
@@ -393,10 +393,10 @@ sat1_cov_hist = cov_hist[:,0,:,:]
 
 # Using pseudo-inverse to invert the matrix
 crb = np.linalg.pinv(fim)
+crb_diag = np.diag(crb)
 
 # Plot the covariance matrix and the FIM diagonal entries.
 
-crb_diag = np.diag(crb)
 plt.figure()
 plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
 plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
@@ -404,9 +404,9 @@ plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
 # plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
 # plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
 # plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')
-plt.plot(sat1_cov_hist[1:,0,0], label='x position Covariance', color='red', linestyle='--')
-plt.plot(sat1_cov_hist[1:,1,1], label='y position Covariance', color='blue', linestyle='--')
-plt.plot(sat1_cov_hist[1:,2,2], label='z position Covariance', color='green', linestyle='--')
+plt.plot(sat1_cov_hist[:,0,0], label='x position Covariance', color='red', linestyle='--')
+plt.plot(sat1_cov_hist[:,1,1], label='y position Covariance', color='blue', linestyle='--')
+plt.plot(sat1_cov_hist[:,2,2], label='z position Covariance', color='green', linestyle='--')
 # plt.plot(sat1_cov_hist[:,3,3], label='x velocity Covariance', color='red', linestyle='--')
 # plt.plot(sat1_cov_hist[:,4,4], label='y velocity Covariance', color='blue', linestyle='--')
 # plt.plot(sat1_cov_hist[:,5,5], label='z velocity Covariance', color='green', linestyle='--')
@@ -425,7 +425,7 @@ scatter1 = ax.scatter(
     x_traj[:,1,0], 
     x_traj[:,2,0],
     c=time,
-    cmap='viridis',  # Sequential colormap
+    cmap='viridis',
     label='Trajectory',
     marker='o'
 )
@@ -434,12 +434,14 @@ scatter2 = ax.scatter(
     np.mean(filter_position, axis=0)[:,1,0],
     np.mean(filter_position, axis=0)[:,2,0], 
     c=time,
-    cmap='plasma',  # Another sequential colormap
+    cmap='plasma', 
     label='Filtered Position',
     marker='^'
 )
 cbar = plt.colorbar(scatter2, ax=ax, shrink=0.5, aspect=10)
-cbar.set_label('Normalized Time')
+# cbar.set_label('Normalized Time')
+cbar2 = plt.colorbar(scatter1, ax=ax, shrink=0.5, aspect=10)
+# cbar2.set_label('Normalized Time')
 
 ax.set_xlabel('X')
 ax.set_ylabel('Y')
