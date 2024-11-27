@@ -36,7 +36,7 @@ class satellite:
         # self.info_matrix = np.linalg.inv(self.cov_m)
         # self.info_vector = self.info_matrix@self.x_0
         # TODO: Adjust initial x_m with random error direction for both position and velocity (different scales)
-        self.x_m = self.x_0 + np.array([0.5,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         self.x_p = self.x_m # Initialize the prior vector exactly the same as the measurement vector
         self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
 
@@ -234,14 +234,14 @@ def state_transition(x):
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 200
-f = 1/60 #Hz
+N = 300
+f = 1 #Hz
 dt = 1/f
-n_sats = 2
-R_weight = 10e-2
+n_sats = 3
+R_weight = 10e-4
 bearing_dim = 3
 state_dim = 6
-meas_dim = n_sats-1 + bearing_dim
+meas_dim = n_sats-1 + bearing_dim   
 R = np.eye(meas_dim)*R_weight
 # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
 # page 6
@@ -320,6 +320,7 @@ cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
 sats_copy = copy.deepcopy(sats)
 
 filter_position = np.zeros((num_trials, N, 3, n_sats))
+error = np.zeros((N,3,n_sats))
 
 
 for trial in range(num_trials):
@@ -346,7 +347,7 @@ for trial in range(num_trials):
             K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
 
             y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
-            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range( sats_copy)) # This sets the range measurement
+            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats_copy)) # This sets the range measurement
 
             h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
             for j in range(bearing_dim,meas_dim):
@@ -358,6 +359,7 @@ for trial in range(num_trials):
             cov_hist[i,sat.id,:,:] += sat.cov_m
 
             filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
+            error[i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
 
 
         #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
@@ -451,9 +453,9 @@ plt.legend()
 
 # Plot the positional error
 plt.figure()
-error_x = np.abs(np.mean(filter_position, axis=0)[:,0,0] - x_traj[:-1,0,0])
-error_y = np.abs(np.mean(filter_position, axis=0)[:,1,0] - x_traj[:-1,1,0])
-error_z = np.abs(np.mean(filter_position, axis=0)[:,2,0] - x_traj[:-1,2,0])
+error_x = np.abs(error[:,0,0])
+error_y = np.abs(error[:,1,0])
+error_z = np.abs(error[:,2,0])
 
 # plt.plot(filter_position[0,:,0,0], label='x position', color='red')
 # plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
