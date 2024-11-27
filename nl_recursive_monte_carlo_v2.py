@@ -42,7 +42,7 @@ class satellite:
 
         self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
-        self.other_sats_pos = np.zeros((N, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
+        self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
         # self.sats_visible = np.zeros((N,n_sats-1)) # Determines whether the other satellites are visible to this satellite
 
 
@@ -234,7 +234,7 @@ def state_transition(x):
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 1200
+N = 200
 f = 1/60 #Hz
 dt = 1/f
 n_sats = 2
@@ -288,21 +288,21 @@ for sat_config in config["satellites"]:
     sats.append(satellite_inst)
 
 
-# Generate synthetic data
-x_traj = np.zeros((N, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
+# Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps
+x_traj = np.zeros((N+1, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
 # This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
 for sat in sats: 
     x = sat.x_0
-    for i in range(N):
+    for i in range(N+1):
         x_traj[i,:,sat.id] = x
         x = rk4_discretization(x, dt)
 
-# Get the positions of the other satellites for each satellite at all N timesteps
+# Get the positions of the other satellites for each satellite at all N+1 timesteps
 for sat in sats:
         sat_i = 0 #iterator variable
         for other_sat in sats:
             if sat.id != other_sat.id:
-                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
+                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N+1 3D positions of the other satellites from x_traj
                 sat_i += 1
 
 # NOTE: We are only doing these trials for one satellites (for now)
@@ -329,7 +329,7 @@ for trial in range(num_trials):
     H = np.zeros((meas_dim,state_dim))
     h = np.zeros((meas_dim))
 
-    for i in range(N-1):
+    for i in range(N):
 
         for sat in sats_copy:
             sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
@@ -421,9 +421,9 @@ fig = plt.figure(figsize=(10, 10))
 ax = fig.add_subplot(111, projection='3d')
 time = np.linspace(0, 1, N)  # Normalized time from 0 to 1
 scatter1 = ax.scatter(
-    x_traj[:,0,0], 
-    x_traj[:,1,0], 
-    x_traj[:,2,0],
+    x_traj[:-1,0,0], 
+    x_traj[:-1,1,0], 
+    x_traj[:-1,2,0],
     c=time,
     cmap='viridis',
     label='Trajectory',
@@ -451,9 +451,9 @@ plt.legend()
 
 # Plot the positional error
 plt.figure()
-error_x = np.abs(np.mean(filter_position, axis=0)[:-1,0,0] - x_traj[:-1,0,0])
-error_y = np.abs(np.mean(filter_position, axis=0)[:-1,1,0] - x_traj[:-1,1,0])
-error_z = np.abs(np.mean(filter_position, axis=0)[:-1,2,0] - x_traj[:-1,2,0])
+error_x = np.abs(np.mean(filter_position, axis=0)[:,0,0] - x_traj[:-1,0,0])
+error_y = np.abs(np.mean(filter_position, axis=0)[:,1,0] - x_traj[:-1,1,0])
+error_z = np.abs(np.mean(filter_position, axis=0)[:,2,0] - x_traj[:-1,2,0])
 
 # plt.plot(filter_position[0,:,0,0], label='x position', color='red')
 # plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
