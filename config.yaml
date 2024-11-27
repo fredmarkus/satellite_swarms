@@ -3,7 +3,7 @@
 satellites:
   - robot_id: 0
     state: [6928,0,0,0,0,7.585163531693988]
-    pos_cov_init: 1
+    pos_cov_init: 100
     vel_cov_init: 0.1
     dim: 6
     meas_dim: 4
@@ -14,7 +14,7 @@ satellites:
 
   - robot_id: 1
     state: [0,6928,0,0,0,-7.585163531693988]
-    pos_cov_init: 1
+    pos_cov_init: 100
     vel_cov_init: 0.1
     dim: 6
     meas_dim: 4

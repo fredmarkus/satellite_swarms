@@ -1,13 +1,21 @@
+#!/usr/bin/env python
+# coding: utf-8
+
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 import csv
 import math
 import yaml
-import cyipopt
 import jax
 import jax.numpy as jnp
 import copy
+import threading
+import time
+from collections import deque
+
 # from functools import partial
+
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2
@@ -18,6 +26,7 @@ class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Chec
     def __init__(self, x: float, y: float, z: float, name: str) -> None:
         self.pos = np.array([x,y,z])
         self.name = name
+
 
 class satellite:
 
@@ -36,7 +45,7 @@ class satellite:
         # self.info_matrix = np.linalg.inv(self.cov_m)
         # self.info_vector = self.info_matrix@self.x_0
         # TODO: Adjust initial x_m with random error direction for both position and velocity (different scales)
-        self.x_m = self.x_0 + np.array([0.5,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         self.x_p = self.x_m # Initialize the prior vector exactly the same as the measurement vector
         self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
 
@@ -82,7 +91,6 @@ class satellite:
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
-                    # print("range",noise)
                     # self.sats_visible[index,sat.id] = 1
 
                 else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
@@ -98,7 +106,6 @@ class satellite:
             self.min_landmark_list = np.append(self.min_landmark_list,[closest_landmark(self.curr_pos, landmarks)],axis=0)
         
         noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-        # print("landmark",noise)
         vec = (self.curr_pos  - self.min_landmark_list[-1]) + noise
         return vec/np.linalg.norm(vec)
 
@@ -117,7 +124,7 @@ class satellite:
         return True
     
 
-# Helper function to determine closest landmark to the satellite at the current state position based on Euclidean distance
+
 def closest_landmark(pos, landmarks: list) -> object:
     """
     Find the closest landmark position to the current position.
@@ -180,7 +187,12 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
     return ecef.reshape(-1,4)
 
 
-# Numerical solution using RK4 method
+def state_transition(x):
+    I = np.eye(3)
+    A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5)
+    A = np.block([[np.zeros((3,3)), I], [A21, np.zeros((3,3))]])
+    return A
+
 def rk4_discretization(x, dt: float):
     r = x[0:3]
     v = x[3:6]
@@ -226,15 +238,8 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
     return np.concatenate((r_new, v_new))
 
 
-def state_transition(x):
-    I = np.eye(3)
-    A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5)
-    A = np.block([[np.zeros((3,3)), I], [A21, np.zeros((3,3))]])
-    return A
-
-## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 1200
+N = 200
 f = 1/60 #Hz
 dt = 1/f
 n_sats = 2
@@ -247,11 +252,6 @@ R = np.eye(meas_dim)*R_weight
 # page 6
 Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
-#MC Parameters
-num_trials = 1
-
-# Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
-# np.random.seed(42)        #Set seed for reproducibility
 
 ### Landmark Initialization ###
 # Import csv data for the lanldmarks
@@ -268,6 +268,7 @@ landmark_objects = []
 # Initialize the landmark objects with their correct name and the ECEF coordinates
 for landmark_obj in landmarks_ecef:
     landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
+
 
 
 ### Satellite Initialization ###
@@ -288,184 +289,213 @@ for sat_config in config["satellites"]:
     sats.append(satellite_inst)
 
 
-# Generate synthetic data
-x_traj = np.zeros((N, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
-# This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
-for sat in sats: 
-    x = sat.x_0
-    for i in range(N):
-        x_traj[i,:,sat.id] = x
-        x = rk4_discretization(x, dt)
+# Function for calculating recursive state estimation in separate thread
+def data_processing_loop():
+    try:
 
-# Get the positions of the other satellites for each satellite at all N timesteps
-for sat in sats:
-        sat_i = 0 #iterator variable
-        for other_sat in sats:
-            if sat.id != other_sat.id:
-                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
-                sat_i += 1
+        first_run = True
+        total_steps = 0
 
-# NOTE: We are only doing these trials for one satellites (for now)
+        while True:
+            # Generate ground-truth synthetic data for the next N timesteps
+            x_traj = np.zeros((N, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
+            # This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
+            for sat in sats:
 
+                if first_run: 
+                    x = sat.x_0
+                else:
+                    x = x_0_next[:,sat.id]
 
-## Calculate FIM directly in recursive fashion.
-fim = np.zeros((num_trials,N*state_dim, N*state_dim))
-f_prior = np.zeros((state_dim, state_dim))
-f_post = np.zeros((state_dim, state_dim))
+                for i in range(N):
+                    x_traj[i,:,sat.id] = x
+                    x = rk4_discretization(x, dt)
 
-J = np.zeros((meas_dim, state_dim))
-R_inv = np.linalg.inv(R)
+            # Save the final state as initial state for the next block of N timesteps
+            x_0_next = x_traj[-1,:,:]
 
-cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
-sats_copy = copy.deepcopy(sats)
-
-filter_position = np.zeros((num_trials, N, 3, n_sats))
-
-
-for trial in range(num_trials):
-    print("Monte Carlo Trial: ", trial)
-
-    y_m = jnp.zeros((N,meas_dim,n_sats))
-    H = np.zeros((meas_dim,state_dim))
-    h = np.zeros((meas_dim))
-
-    for i in range(N-1):
-
-        for sat in sats_copy:
-            sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
-            A = state_transition(sat.x_m)
-            sat.x_p = rk4_discretization(sat.x_m, dt)
-            sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
+            # Get the positions of the other satellites for each satellite at all N timesteps
+            for sat in sats:
+                    sat_i = 0 #iterator variable
+                    for other_sat in sats:
+                        if sat.id != other_sat.id:
+                            sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N 3D positions of the other satellites from x_traj
+                            sat_i += 1
 
 
-        for sat in sats_copy:
-            H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
-            for j in range(bearing_dim,meas_dim):
-                H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
-
-            K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
-
-            y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
-            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range( sats_copy)) # This sets the range measurement
-
-            h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-            for j in range(bearing_dim,meas_dim):
-                h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
+            ## Calculate FIM directly in recursive fashion.
+            fim = np.zeros((N*state_dim, N*state_dim))
             
-            sat.x_m = sat.x_p + K@(y_m[i,:,sat.id] - h)
-            sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
+            # If it is the first run, initialize the prior and posterior FIM matrices. Otherwise continue using the previous values.
+            if first_run:
+                f_prior = np.zeros((state_dim, state_dim))
+                f_post = np.zeros((state_dim, state_dim))
 
-            cov_hist[i,sat.id,:,:] += sat.cov_m
+            if first_run:
+                first_run = False
 
-            filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
+            J = np.zeros((meas_dim, state_dim))
+            R_inv = np.linalg.inv(R)
+
+            cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
 
 
-        #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
-        if i > 0:
-            start_i = i * state_dim
-            A = state_transition(sats_copy[0].x_m)
-            f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
-            J[0:bearing_dim,0:3] = sats_copy[0].H_landmark(sats_copy[0].x_m[0:3])
-            for j in range(3,meas_dim): ## Consider checks for nan values
-                J[j,0:3] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m[0:3])
-            f_post = f_prior + J.T@R_inv@J
-            fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
+            y_m = jnp.zeros((N,meas_dim,n_sats))
+            H = np.zeros((meas_dim,state_dim))
+            h = np.zeros((meas_dim))
 
-            # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
+            for i in range(N-1):
+
+                for sat in sats:
+
+                    sat.curr_pos = x_traj[i+1, 0:3, sat.id]  # Update position
+
+                    # State prediction
+                    A = state_transition(sat.x_m)
+                    sat.x_p = rk4_discretization(sat.x_m, dt)
+                    sat.cov_p = A @ sat.cov_m @ A.T + Q
+
+                for sat in sats:
+                    # Measurement update
+                    H = np.zeros((meas_dim, state_dim))
+                    H[0:bearing_dim, :] = sat.H_landmark(sat.x_p)
+                    for j in range(bearing_dim, meas_dim):
+                        H[j, :] = sat.H_inter_range(i+1, j, sat.x_p)
+
+                    K = sat.cov_p @ H.T @ np.linalg.pinv(H @ sat.cov_p @ H.T + R)
+
+                    # Simulate measurements
+                    y_m = np.zeros(meas_dim)
+                    y_m[0:bearing_dim] = sat.measure_z_landmark(landmark_objects)
+                    y_m[bearing_dim:meas_dim] = sat.measure_z_range(sats)
+
+                    # Expected measurements
+                    h = np.zeros(meas_dim)
+                    h[0:bearing_dim] = sat.h_landmark(sat.x_p[:3])
+                    for j in range(bearing_dim, meas_dim):
+                        h[j] = sat.h_inter_range(i+1, j, sat.x_p[:3])
+
+                    # State and covariance update
+                    sat.x_m = sat.x_p + K @ (y_m - h)
+                    sat.cov_m = (np.eye(state_dim) - K @ H) @ sat.cov_p @ (np.eye(state_dim) - K @ H).T + K @ R @ K.T
+
+
+                # Record timestep
+                with data_lock:
+                    error = np.abs(sats[0].x_m[0:3] - sats[0].curr_pos)
+                    total_steps += 1
+
+                    error_state.append(error[0])
+                    timestep_vec.append(total_steps)
+                
+                    # print("Appended timestep")
+
+                # time.sleep(dt)  # Simulate real-time processing delay
+            
+            if stop_event.is_set():
+                print('Stopping data processing loop')
+                break
+
+
+                #Assume no knowledge at initial state so we don't place any information in the first [state_dim x state_dim] block
+                # if i > 0:
+                #     start_i = i * state_dim
+                #     A = state_transition(sats[0].x_m)
+                #     f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
+                #     J[0:bearing_dim,0:3] = sats[0].H_landmark(sats[0].x_m[0:3])
+                #     for j in range(3,meas_dim): ## Consider checks for nan values
+                #         J[j,0:3] = sats[0].H_inter_range(i+1, j, sats[0].x_m[0:3])
+                #     f_post = f_prior + J.T@R_inv@J
+                #     fim[start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
+
+                    # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
+
+
+            # Using pseudo-inverse to invert the matrix
+            # crb = np.linalg.pinv(fim)
+
+            # Plot the covariance matrix and the FIM diagonal entries.
+            # crb_diag = np.diag(crb)
+
+
+    except Exception as e:
+        print(f"Error in data_processing_loop: {e}")
+
+MAX_POINTS = 1000  # Adjust based on your requirements
+
+# Initialize timestep_vec with a fixed maximum length
+timestep_vec = deque(maxlen=MAX_POINTS)
+
+# Initialize error_state for the first satellite's x-error with a fixed maximum length
+error_state = deque(maxlen=MAX_POINTS)
+
+# Start the data processing thread
+
+# timestep_vec = []
+# error_state = [[] for _ in range(n_sats)]
+data_lock = threading.Lock()
+stop_event = threading.Event()
+
+
+processing_thread = threading.Thread(target=data_processing_loop, daemon=True,
+                                     name='DataProcessingThread')
+processing_thread.start()
+
+# data_processing_loop()
+
+# Set up the live plot
+fig, ax = plt.subplots()
+
+line, = ax.plot([], [], label='Sat0 X-Error', color='r')
+
+
+ax.set_xlabel('Timestep')
+ax.set_ylabel('Error')
+ax.set_title('Live Error State')
+ax.legend(loc='upper right')
+ax.grid(True)
+
+
+def init():
+    line.set_data([], [])
+    ax.set_autoscalex_on(True)
+    ax.set_autoscaley_on(True)
+    return line,
+
+def update(frame):
+    with data_lock:
+        if not timestep_vec:
+            return line,
     
-    sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
+        current_timestep = list(timestep_vec)
+        current_errors = list(error_state)       
+            
+    
+    # Update the line data
+    line.set_data(current_timestep, current_errors)
+    
+    # Optionally adjust y-axis based on data
+    ax.relim()
+    ax.autoscale_view(scalex=True,scaley=True) # Only autoscale y-axis
 
-# Average FIM
-fim = np.mean(fim, axis=0)
+    return line,
 
-#Get the average covariance matrix for each satellite for each timestep
-for i in range(N):
-    for sat in sats:
-        cov_hist[i,sat.id,:,:] = cov_hist[i,sat.id,:,:]/num_trials
+def infinite_frames():
+    frame = 0
+    while True:
+        yield frame
+        frame += 1
 
-sat1_cov_hist = cov_hist[:,0,:,:]
-
-# The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
-# fim_acc = fim[state_dim:,state_dim:]
-# crb = np.linalg.inv(fim_acc)
-# crb_final = np.zeros((N*state_dim,N*state_dim))
-# crb_final[state_dim:,state_dim:] = crb
-
-# Using pseudo-inverse to invert the matrix
-crb = np.linalg.pinv(fim)
-crb_diag = np.diag(crb)
-
-# Plot the covariance matrix and the FIM diagonal entries.
-
-plt.figure()
-plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
-plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
-plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
-# plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
-# plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
-# plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')
-plt.plot(sat1_cov_hist[:,0,0], label='x position Covariance', color='red', linestyle='--')
-plt.plot(sat1_cov_hist[:,1,1], label='y position Covariance', color='blue', linestyle='--')
-plt.plot(sat1_cov_hist[:,2,2], label='z position Covariance', color='green', linestyle='--')
-# plt.plot(sat1_cov_hist[:,3,3], label='x velocity Covariance', color='red', linestyle='--')
-# plt.plot(sat1_cov_hist[:,4,4], label='y velocity Covariance', color='blue', linestyle='--')
-# plt.plot(sat1_cov_hist[:,5,5], label='z velocity Covariance', color='green', linestyle='--')
-plt.title('Covariance Matrix and CRB for Satellite 1 ')
-plt.xlabel('Timestep')
-# plt.ylabel('Covariance')
-plt.legend()
-# plt.show()
-
-
-fig = plt.figure(figsize=(10, 10))
-ax = fig.add_subplot(111, projection='3d')
-time = np.linspace(0, 1, N)  # Normalized time from 0 to 1
-scatter1 = ax.scatter(
-    x_traj[:,0,0], 
-    x_traj[:,1,0], 
-    x_traj[:,2,0],
-    c=time,
-    cmap='viridis',
-    label='Trajectory',
-    marker='o'
+ani = animation.FuncAnimation(
+    fig,
+    update,
+    init_func=init,
+    frames=infinite_frames,    # Use the infinite generator
+    save_count=1000,           # Specify a reasonable number of frames to cache
+    blit=False,
+    interval=100,
+    repeat=False
 )
-scatter2 = ax.scatter(
-    np.mean(filter_position, axis=0)[:,0,0], 
-    np.mean(filter_position, axis=0)[:,1,0],
-    np.mean(filter_position, axis=0)[:,2,0], 
-    c=time,
-    cmap='plasma', 
-    label='Filtered Position',
-    marker='^'
-)
-cbar = plt.colorbar(scatter2, ax=ax, shrink=0.5, aspect=10)
-# cbar.set_label('Normalized Time')
-cbar2 = plt.colorbar(scatter1, ax=ax, shrink=0.5, aspect=10)
-# cbar2.set_label('Normalized Time')
 
-ax.set_xlabel('X')
-ax.set_ylabel('Y')
-ax.set_zlabel('Z')
-plt.title('Position Groundtruth for Satellite 1 ')
-plt.legend()
 
-# Plot the positional error
-plt.figure()
-error_x = np.abs(np.mean(filter_position, axis=0)[:-1,0,0] - x_traj[:-1,0,0])
-error_y = np.abs(np.mean(filter_position, axis=0)[:-1,1,0] - x_traj[:-1,1,0])
-error_z = np.abs(np.mean(filter_position, axis=0)[:-1,2,0] - x_traj[:-1,2,0])
-
-# plt.plot(filter_position[0,:,0,0], label='x position', color='red')
-# plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
-# plt.plot(filter_position[0,:,2,0], label='z position', color='green')
-# plt.plot(x_traj[:,0,0], label='x position truth', color='red', linestyle='--')
-# plt.plot(x_traj[:,1,0], label='y position truth', color='blue', linestyle='--')
-# plt.plot(x_traj[:,2,0], label='z position truth', color='green', linestyle='--')
-
-plt.plot(error_x, label='x position error', color='red')
-plt.plot(error_y, label='y position error', color='blue')
-plt.plot(error_z, label='z position error', color='green')
-plt.title('Position Groundtruth for Satellite 1 ')
-plt.xlabel('Timestep')
-plt.legend()
 plt.show()
