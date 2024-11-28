@@ -109,8 +109,10 @@ class satellite:
         # Calculate the angle between the two satellites
         vec = sat_pos - self.curr_pos
         vec_earth = np.array([0,0,0]) - self.curr_pos
-        # Calculate the angle between the two vectors
-        angle = math.acos(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)))
+        # Calculate the angle between the two vector
+        #Some instances floating point errors may arise. Round to 6 d.p.
+        angle = math.acos(round(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)),6)) 
+        
         if abs(angle) < threshold_angle:
             return False
         
@@ -237,7 +239,7 @@ def state_transition(x):
 N = 300
 f = 1 #Hz
 dt = 1/f
-n_sats = 3
+n_sats = 4
 R_weight = 10e-4
 bearing_dim = 3
 state_dim = 6
@@ -248,7 +250,7 @@ R = np.eye(meas_dim)*R_weight
 Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
 #MC Parameters
-num_trials = 1
+num_trials = 5
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
 # np.random.seed(42)        #Set seed for reproducibility
@@ -320,7 +322,7 @@ cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
 sats_copy = copy.deepcopy(sats)
 
 filter_position = np.zeros((num_trials, N, 3, n_sats))
-error = np.zeros((N,3,n_sats))
+pos_error = np.zeros((num_trials, N , 3, n_sats))
 
 
 for trial in range(num_trials):
@@ -359,7 +361,7 @@ for trial in range(num_trials):
             cov_hist[i,sat.id,:,:] += sat.cov_m
 
             filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
-            error[i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
+            pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
 
 
         #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
@@ -453,9 +455,9 @@ plt.legend()
 
 # Plot the positional error
 plt.figure()
-error_x = np.abs(error[:,0,0])
-error_y = np.abs(error[:,1,0])
-error_z = np.abs(error[:,2,0])
+error_x = np.abs(np.mean(pos_error,axis=0)[:,0,0])
+error_y = np.abs(np.mean(pos_error,axis=0)[:,1,0])
+error_z = np.abs(np.mean(pos_error,axis=0)[:,2,0])
 
 # plt.plot(filter_position[0,:,0,0], label='x position', color='red')
 # plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
