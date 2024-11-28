@@ -11,6 +11,8 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
+    inclination: 90 # define in degrees!
+    camera_exists: True
 
   - robot_id: 1
     state: [0,6928,0,0,0,7.585163531693988]
@@ -22,6 +24,8 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
+    inclination: -10 # define in degrees!
+    camera_exists: True
   
   - robot_id: 2
     state: [4898,4898,0,0,0,7.585163531693988]
@@ -33,6 +37,8 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
+    inclination: 45.0 # define in degrees!
+    camera_exists: True
 
   # - robot_id: 3
   #   state: [0,-6928,0,0,0,-7.585163531693988]
@@ -44,3 +50,5 @@ satellites:
   #   N: N
   #   n_sats: 2
   #   landmarks: landmark_objects
+  #   inclination: 0.0 # define in degrees!
+  #   camera_exists: True

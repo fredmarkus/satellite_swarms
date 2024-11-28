@@ -21,7 +21,19 @@ class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Chec
 
 class satellite:
 
-    def __init__(self, state: np.ndarray, pos_cov_init: float, vel_cov_init: float, robot_id: int, dim: int, meas_dim: int, R_weight: float, N: int, n_sats: int, landmarks: object) -> None:
+    def __init__(self, 
+                 state: np.ndarray, 
+                 pos_cov_init: float, 
+                 vel_cov_init: float, 
+                 robot_id: int, 
+                 dim: int, 
+                 meas_dim: int, 
+                 R_weight: float, 
+                 N: int, 
+                 n_sats: int, 
+                 landmarks: object,
+                 inclination: float,
+                 camera_exists: bool) -> None:
         self.x_0 = state
         self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
@@ -31,14 +43,22 @@ class satellite:
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
+        self.inclination = inclination
+        self.camera_exists = camera_exists
         # self.inv_cov = jnp.linalg.inv(self.cov_m)
+
+        #Overwrite the initial state velocities to account for inclination orbital element
+        self.x_0[4] = float(self.x_0[5]*np.cos(np.radians(self.inclination)))
+        self.x_0[5] = float(self.x_0[5]*np.sin(np.radians(self.inclination)))
         
-        # self.info_matrix = np.linalg.inv(self.cov_m)
-        # self.info_vector = self.info_matrix@self.x_0
         # TODO: Adjust initial x_m with random error direction for both position and velocity (different scales)
-        self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        self.x_p = self.x_m # Initialize the prior vector exactly the same as the measurement vector
-        self.cov_p = self.cov_m # Initialize the prior covariance exactly the same as the measurement covariance
+        self.x_m = self.x_0 # + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=int(self.dim/2))
+        x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
+        self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
+
+        self.x_p = self.x_m
+        self.cov_p = self.cov_m # Initialize the prior covariance the same as the measurement covariance
 
         self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
@@ -55,9 +75,6 @@ class satellite:
     def H_landmark(self, x):
         # Use jax to autodifferentiate
         jac = jax.jacobian(self.h_landmark)(x)
-        # min_landmark = closest_landmark(x, self.landmarks)
-        # norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
-        # jac = jnp.eye(3)/norm - np.outer(x - min_landmark, x - min_landmark)/(norm**3)
         return jac
 
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
@@ -237,7 +254,7 @@ def state_transition(x):
 N = 300
 f = 1 #Hz
 dt = 1/f
-n_sats = 3
+n_sats = 1
 R_weight = 10e-4
 bearing_dim = 3
 state_dim = 6
@@ -248,7 +265,7 @@ R = np.eye(meas_dim)*R_weight
 Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
 #MC Parameters
-num_trials = 1
+num_trials = 2
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
 # np.random.seed(42)        #Set seed for reproducibility
@@ -278,12 +295,14 @@ sats = []
 
 for sat_config in config["satellites"]:
     sat_config["state"] = np.array(sat_config["state"])
-    # sat_config["state"][5] = float(np.sqrt(MU/R_SAT)) # for now assign velocity using vis-viva equation
+
+    # Overwrite the following yaml file parameters with values provided in this script
     sat_config["N"] = N
     sat_config["landmarks"] = landmark_objects
     sat_config["meas_dim"] = meas_dim
     sat_config["n_sats"] = n_sats
     sat_config["R_weight"] = R_weight
+
     satellite_inst = satellite(**sat_config)
     sats.append(satellite_inst)
 
@@ -345,11 +364,18 @@ for trial in range(num_trials):
                 H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
 
             K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
+            
+            # Check if the camera is on for the satellite to take bearing measurements to landmarks
+            if sat.camera_exists:
+                y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects)))
+                h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
+            else :
+                y_m = y_m.at[i,0:bearing_dim,sat.id].set(np.zeros((bearing_dim,))) # Set to zero if camera is off
+                h[0:bearing_dim] = np.zeros((bearing_dim,))
 
-            y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
+            # Range measurements always take place regardless of camera status
             y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats_copy)) # This sets the range measurement
 
-            h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
             for j in range(bearing_dim,meas_dim):
                 h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
             
