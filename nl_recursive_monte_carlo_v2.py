@@ -82,7 +82,6 @@ class satellite:
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
-                    # print("range",noise)
                     # self.sats_visible[index,sat.id] = 1
 
                 else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
@@ -98,7 +97,6 @@ class satellite:
             self.min_landmark_list = np.append(self.min_landmark_list,[closest_landmark(self.curr_pos, landmarks)],axis=0)
         
         noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-        # print("landmark",noise)
         vec = (self.curr_pos  - self.min_landmark_list[-1]) + noise
         return vec/np.linalg.norm(vec)
 
@@ -239,7 +237,7 @@ def state_transition(x):
 N = 300
 f = 1 #Hz
 dt = 1/f
-n_sats = 4
+n_sats = 3
 R_weight = 10e-4
 bearing_dim = 3
 state_dim = 6
@@ -250,7 +248,7 @@ R = np.eye(meas_dim)*R_weight
 Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
 #MC Parameters
-num_trials = 5
+num_trials = 1
 
 # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
 # np.random.seed(42)        #Set seed for reproducibility

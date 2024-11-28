@@ -117,7 +117,7 @@ class satellite:
         vec = sat_pos - self.curr_pos
         vec_earth = np.array([0,0,0]) - self.curr_pos
         # Calculate the angle between the two vectors
-        angle = math.acos(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)))
+        angle = math.acos(round(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)),6)) 
         if abs(angle) < threshold_angle:
             return False
         
@@ -239,11 +239,11 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
 
 
 #General Parameters
-N = 200
-f = 1/60 #Hz
+N = 250
+f = 1 #Hz
 dt = 1/f
-n_sats = 2
-R_weight = 10e-2
+n_sats = 3
+R_weight = 10e-4
 bearing_dim = 3
 state_dim = 6
 meas_dim = n_sats-1 + bearing_dim
@@ -279,7 +279,7 @@ sats = []
 
 for sat_config in config["satellites"]:
     sat_config["state"] = np.array(sat_config["state"])
-    # sat_config["state"][5] = float(np.sqrt(MU/R_SAT)) # for now assign velocity using vis-viva equation
+    # sat_config["state"][5]sats_ = float(np.sqrt(MU/R_SAT)) # for now assign velocity using vis-viva equation
     sat_config["N"] = N
     sat_config["landmarks"] = landmark_objects
     sat_config["meas_dim"] = meas_dim
@@ -330,9 +330,8 @@ def data_processing_loop():
             if first_run:
                 f_prior = np.zeros((state_dim, state_dim))
                 f_post = np.zeros((state_dim, state_dim))
-
-            if first_run:
                 first_run = False
+
 
             J = np.zeros((meas_dim, state_dim))
             R_inv = np.linalg.inv(R)
@@ -357,7 +356,6 @@ def data_processing_loop():
 
                 for sat in sats:
                     # Measurement update
-                    H = np.zeros((meas_dim, state_dim))
                     H[0:bearing_dim, :] = sat.H_landmark(sat.x_p)
                     for j in range(bearing_dim, meas_dim):
                         H[j, :] = sat.H_inter_range(i+1, j, sat.x_p)
@@ -365,18 +363,16 @@ def data_processing_loop():
                     K = sat.cov_p @ H.T @ np.linalg.pinv(H @ sat.cov_p @ H.T + R)
 
                     # Simulate measurements
-                    y_m = np.zeros(meas_dim)
-                    y_m[0:bearing_dim] = sat.measure_z_landmark(landmark_objects)
-                    y_m[bearing_dim:meas_dim] = sat.measure_z_range(sats)
+                    y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
+                    y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats)) # This sets the range measurement
 
                     # Expected measurements
-                    h = np.zeros(meas_dim)
                     h[0:bearing_dim] = sat.h_landmark(sat.x_p[:3])
                     for j in range(bearing_dim, meas_dim):
                         h[j] = sat.h_inter_range(i+1, j, sat.x_p[:3])
 
                     # State and covariance update
-                    sat.x_m = sat.x_p + K @ (y_m - h)
+                    sat.x_m = sat.x_p + K @ (y_m[i,:,sat.id] - h)
                     sat.cov_m = (np.eye(state_dim) - K @ H) @ sat.cov_p @ (np.eye(state_dim) - K @ H).T + K @ R @ K.T
 
 
@@ -385,7 +381,9 @@ def data_processing_loop():
                     error = np.abs(sats[0].x_m[0:3] - sats[0].curr_pos)
                     total_steps += 1
 
-                    error_state.append(error[0])
+                    error_state_x.append(error[0])
+                    error_state_y.append(error[1])
+                    error_state_z.append(error[2])
                     timestep_vec.append(total_steps)
                 
                     # print("Appended timestep")
@@ -427,7 +425,9 @@ MAX_POINTS = 1000  # Adjust based on your requirements
 timestep_vec = deque(maxlen=MAX_POINTS)
 
 # Initialize error_state for the first satellite's x-error with a fixed maximum length
-error_state = deque(maxlen=MAX_POINTS)
+error_state_x = deque(maxlen=MAX_POINTS)
+error_state_y = deque(maxlen=MAX_POINTS)
+error_state_z = deque(maxlen=MAX_POINTS)
 
 # Start the data processing thread
 
@@ -446,7 +446,9 @@ processing_thread.start()
 # Set up the live plot
 fig, ax = plt.subplots()
 
-line, = ax.plot([], [], label='Sat0 X-Error', color='r')
+line_x, = ax.plot([], [], label='Sat0 X-Error', color='r')
+line_y, = ax.plot([], [], label='Sat0 Y-Error', color='g')
+line_z, = ax.plot([], [], label='Sat0 Z-Error', color='b')
 
 
 ax.set_xlabel('Timestep')
@@ -457,28 +459,34 @@ ax.grid(True)
 
 
 def init():
-    line.set_data([], [])
+    line_x.set_data([], [])
+    line_y.set_data([], [])
+    line_z.set_data([], [])
     ax.set_autoscalex_on(True)
     ax.set_autoscaley_on(True)
-    return line,
+    return line_x, line_y, line_z,
 
 def update(frame):
     with data_lock:
         if not timestep_vec:
-            return line,
+            return line_x, line_y, line_z,
     
         current_timestep = list(timestep_vec)
-        current_errors = list(error_state)       
+        current_error_x = list(error_state_x)
+        current_error_y = list(error_state_y)
+        current_error_z = list(error_state_z)       
             
     
     # Update the line data
-    line.set_data(current_timestep, current_errors)
+    line_x.set_data(current_timestep, current_error_x)
+    line_y.set_data(current_timestep, current_error_y)
+    line_z.set_data(current_timestep, current_error_z)
     
     # Optionally adjust y-axis based on data
     ax.relim()
     ax.autoscale_view(scalex=True,scaley=True) # Only autoscale y-axis
 
-    return line,
+    return line_x, line_y, line_z,
 
 def infinite_frames():
     frame = 0
