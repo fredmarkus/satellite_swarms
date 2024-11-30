@@ -24,7 +24,7 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
-    inclination: -10 # define in degrees!
+    inclination: -15 # define in degrees!
     camera_exists: True
   
   - robot_id: 2

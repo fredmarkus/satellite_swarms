@@ -10,9 +10,18 @@ import copy
 # from functools import partial
 
 # Constants
-MU = 3.986004418 * 10**5 # km^3/s^2
-R_EARTH = 6378
-R_SAT = 550 + R_EARTH
+MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
+R_EARTH = 6378 # km # Radius of the earth
+HEIGHT = 550 # km # Height of the satellite
+R_SAT = HEIGHT + R_EARTH
+ROH_0 = 1.225e9 # kg/km^3 # Density of air at sea level
+H_0 = 0 # km # Height of sea level
+MASS = 2 # kg # Mass of the satellite
+AREA = 1e-9 # km^2 # Cross-sectional area of the satellite
+SCALE_HEIGHT = 8.4 # km # Scale height of the atmosphere
+C_D = 2.2 # Drag coefficient of the satellite
+
+DENSITY = ROH_0*np.exp(-(HEIGHT-H_0)/SCALE_HEIGHT) # kg/km^3 # Density of the atmosphere at the height of the satellite
 
 class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Check with Paulo or Zac if this is correct)
     def __init__(self, x: float, y: float, z: float, name: str) -> None:
@@ -51,11 +60,11 @@ class satellite:
         self.x_0[4] = float(self.x_0[5]*np.cos(np.radians(self.inclination)))
         self.x_0[5] = float(self.x_0[5]*np.sin(np.radians(self.inclination)))
         
-        # TODO: Adjust initial x_m with random error direction for both position and velocity (different scales)
-        self.x_m = self.x_0 # + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=int(self.dim/2))
-        x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
-        self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
+        # Initialize the measurement vector with noise
+        self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        # x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=int(self.dim/2))
+        # x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
+        # self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
 
         self.x_p = self.x_m
         self.cov_p = self.cov_m # Initialize the prior covariance the same as the measurement covariance
@@ -196,6 +205,12 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
     
     return ecef.reshape(-1,4)
 
+# TODO: Add J2 dynamics in discretization and state transitionk
+
+def atmospheric_drag(v):
+    drag = (-0.5*C_D*DENSITY*AREA*v*np.linalg.norm(v)**2)/MASS
+    return drag
+
 
 # Numerical solution using RK4 method
 def rk4_discretization(x, dt: float):
@@ -206,25 +221,25 @@ def rk4_discretization(x, dt: float):
         """Derivative of r with respect to time is velocity v."""
         return v
 
-    def dv_dt(r):
+    def dv_dt(r, v):
         """Derivative of v with respect to time is gravitational acceleration."""
-        return (-MU / (jnp.linalg.norm(r)**3)) * r
+        return (-MU / (jnp.linalg.norm(r)**3)) * r + atmospheric_drag(v)
 
     # Calculate k1 for r and v
     k1_r = dr_dt(v)
-    k1_v = dv_dt(r)
+    k1_v = dv_dt(r, v)
 
     # Calculate k2 for r and v
     k2_r = dr_dt(v + 0.5 * dt * k1_v)
-    k2_v = dv_dt(r + 0.5 * dt * k1_r)
+    k2_v = dv_dt(r + 0.5 * dt * k1_r, v + 0.5 * dt * k1_v)
 
     # Calculate k3 for r and v
     k3_r = dr_dt(v + 0.5 * dt * k2_v)
-    k3_v = dv_dt(r + 0.5 * dt * k2_r)
+    k3_v = dv_dt(r + 0.5 * dt * k2_r, v + 0.5 * dt * k2_v)
 
     # Calculate k4 for r and v
     k4_r = dr_dt(v + dt * k3_v)
-    k4_v = dv_dt(r + dt * k3_r)
+    k4_v = dv_dt(r + dt * k3_r, v + dt * k3_v)
 
     # Combine the k terms to get the next position and velocity
     r_new = r + (dt / 6) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
@@ -245,16 +260,18 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
 
 def state_transition(x):
     I = np.eye(3)
-    A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5)
-    A = np.block([[np.zeros((3,3)), I], [A21, np.zeros((3,3))]])
+    A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5) # gravitational derivatives
+    A22 = -DENSITY*C_D*AREA/(2*MASS)*(np.outer(x[3:6],x[3:6])/np.linalg.norm(x[3:6]) + I*np.linalg.norm(x[3:6])) # drag derivatives
+    # print(A22) 
+    A = np.block([[np.zeros((3,3)), I], [A21, A22]])
     return A
 
 ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
 #General Parameters
-N = 300
+N = 400
 f = 1 #Hz
 dt = 1/f
-n_sats = 1
+n_sats = 3
 R_weight = 10e-4
 bearing_dim = 3
 state_dim = 6
@@ -276,7 +293,7 @@ landmarks = []
 with open('landmark_coordinates.csv', newline='',) as csvfile:
     reader = csv.reader(csvfile, delimiter=',',)
     for row in reader:
-        landmarks.append(np.array([row[0],row[1], row[2], row[3]]))
+        landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
 
 
 landmarks_ecef = latlon2ecef(landmarks)
@@ -307,7 +324,7 @@ for sat_config in config["satellites"]:
     sats.append(satellite_inst)
 
 
-# Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps
+# Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps;
 x_traj = np.zeros((N+1, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
 # This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
 for sat in sats: 

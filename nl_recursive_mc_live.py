@@ -30,7 +30,19 @@ class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Chec
 
 class satellite:
 
-    def __init__(self, state: np.ndarray, pos_cov_init: float, vel_cov_init: float, robot_id: int, dim: int, meas_dim: int, R_weight: float, N: int, n_sats: int, landmarks: object) -> None:
+    def __init__(self, 
+                 state: np.ndarray, 
+                 pos_cov_init: float, 
+                 vel_cov_init: float, 
+                 robot_id: int, 
+                 dim: int, 
+                 meas_dim: int, 
+                 R_weight: float, 
+                 N: int, 
+                 n_sats: int, 
+                 landmarks: object,
+                 inclination: float,
+                 camera_exists: bool) -> None:
         self.x_0 = state
         self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
@@ -40,10 +52,14 @@ class satellite:
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
+        self.inclination = inclination
+        self.camera_exists = camera_exists
         # self.inv_cov = jnp.linalg.inv(self.cov_m)
+
+        #Overwrite the initial state velocities to account for inclination orbital element
+        self.x_0[4] = float(self.x_0[5]*np.cos(np.radians(self.inclination)))
+        self.x_0[5] = float(self.x_0[5]*np.sin(np.radians(self.inclination)))
         
-        # self.info_matrix = np.linalg.inv(self.cov_m)
-        # self.info_vector = self.info_matrix@self.x_0
         # TODO: Adjust initial x_m with random error direction for both position and velocity (different scales)
         self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         self.x_p = self.x_m # Initialize the prior vector exactly the same as the measurement vector
@@ -362,14 +378,20 @@ def data_processing_loop():
 
                     K = sat.cov_p @ H.T @ np.linalg.pinv(H @ sat.cov_p @ H.T + R)
 
+                    if sat.camera_exists:
+                        y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
+                        h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
+                    else:
+                        y_m = y_m.at[i,0:bearing_dim,sat.id].set(np.zeros((bearing_dim,))) # Set to zero if camera is off
+                        h[0:bearing_dim] = np.zeros((bearing_dim,))
+
                     # Simulate measurements
-                    y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects))) # This sets the bearing measurement
                     y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats)) # This sets the range measurement
 
                     # Expected measurements
-                    h[0:bearing_dim] = sat.h_landmark(sat.x_p[:3])
+
                     for j in range(bearing_dim, meas_dim):
-                        h[j] = sat.h_inter_range(i+1, j, sat.x_p[:3])
+                        h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
 
                     # State and covariance update
                     sat.x_m = sat.x_p + K @ (y_m[i,:,sat.id] - h)
@@ -390,30 +412,30 @@ def data_processing_loop():
 
                 # time.sleep(dt)  # Simulate real-time processing delay
             
+
+
+                #Assume no knowledge at initial state so we don't place any information in the first [state_dim x state_dim] block
+                if i > 0:
+                    start_i = i * state_dim
+                    A = state_transition(sats[0].x_m)
+                    f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
+                    J[0:bearing_dim,0:3] = sats[0].H_landmark(sats[0].x_m[0:3])
+                    for j in range(3,meas_dim): ## Consider checks for nan values
+                        J[j,0:3] = sats[0].H_inter_range(i+1, j, sats[0].x_m[0:3])
+                    f_post = f_prior + J.T@R_inv@J
+                    fim[start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
+
+                    print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
+
             if stop_event.is_set():
                 print('Stopping data processing loop')
                 break
 
-
-                #Assume no knowledge at initial state so we don't place any information in the first [state_dim x state_dim] block
-                # if i > 0:
-                #     start_i = i * state_dim
-                #     A = state_transition(sats[0].x_m)
-                #     f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
-                #     J[0:bearing_dim,0:3] = sats[0].H_landmark(sats[0].x_m[0:3])
-                #     for j in range(3,meas_dim): ## Consider checks for nan values
-                #         J[j,0:3] = sats[0].H_inter_range(i+1, j, sats[0].x_m[0:3])
-                #     f_post = f_prior + J.T@R_inv@J
-                #     fim[start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
-
-                    # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
-
-
             # Using pseudo-inverse to invert the matrix
-            # crb = np.linalg.pinv(fim)
+            crb = np.linalg.pinv(fim)
 
             # Plot the covariance matrix and the FIM diagonal entries.
-            # crb_diag = np.diag(crb)
+            crb_diag = np.diag(crb)
 
 
     except Exception as e:
