@@ -3,11 +3,12 @@ import matplotlib.pyplot as plt
 import csv
 import math
 import yaml
-import cyipopt
 import jax
 import jax.numpy as jnp
 import copy
-# from functools import partial
+import argparse
+
+from plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
@@ -266,251 +267,198 @@ def state_transition(x):
     A = np.block([[np.zeros((3,3)), I], [A21, A22]])
     return A
 
-## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
-#General Parameters
-N = 400
-f = 1 #Hz
-dt = 1/f
-n_sats = 3
-R_weight = 10e-4
-bearing_dim = 3
-state_dim = 6
-meas_dim = n_sats-1 + bearing_dim   
-R = np.eye(meas_dim)*R_weight
-# Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
-# page 6
-Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
+if __name__ == "__main__":
+    ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
+    #General Parameters
+    parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
+    parser.add_argument('--N', type=int, default=400, help='Number of timesteps')
+    parser.add_argument('--f', type=int, default=1, help='Frequency of the simulation')
+    parser.add_argument('--n_sats', type=int, default=3, help='Number of satellites')
+    parser.add_argument('--R_weight', type=float, default=10e-4, help='Measurement noise weight')
+    parser.add_argument('--bearing_dim', type=int, default=3, help='Dimension of the bearing measurement')
+    parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
+    parser.add_argument('--num_trials', type=int, default=2, help='Number of Monte Carlo trials')
+    args = parser.parse_args()
 
-#MC Parameters
-num_trials = 2
+    N = args.N
+    f = args.f #Hz
+    dt = 1/f
+    n_sats = args.n_sats
+    R_weight = args.R_weight
+    bearing_dim = args.bearing_dim
+    state_dim = args.state_dim
+    meas_dim = n_sats-1 + bearing_dim   
+    R = np.eye(meas_dim)*R_weight
+    # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
+    # page 6
+    Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
-# Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
-# np.random.seed(42)        #Set seed for reproducibility
+    #MC Parameters
+    num_trials = args.num_trials
 
-### Landmark Initialization ###
-# Import csv data for the lanldmarks
-landmarks = []
-with open('landmark_coordinates.csv', newline='',) as csvfile:
-    reader = csv.reader(csvfile, delimiter=',',)
-    for row in reader:
-        landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
+    # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
+    # np.random.seed(42)        #Set seed for reproducibility
 
-
-landmarks_ecef = latlon2ecef(landmarks)
-landmark_objects = []
-
-# Initialize the landmark objects with their correct name and the ECEF coordinates
-for landmark_obj in landmarks_ecef:
-    landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
-
-
-### Satellite Initialization ###
-with open("config.yaml", "r") as file:
-    config = yaml.safe_load(file)
-
-sats = []
-
-for sat_config in config["satellites"]:
-    sat_config["state"] = np.array(sat_config["state"])
-
-    # Overwrite the following yaml file parameters with values provided in this script
-    sat_config["N"] = N
-    sat_config["landmarks"] = landmark_objects
-    sat_config["meas_dim"] = meas_dim
-    sat_config["n_sats"] = n_sats
-    sat_config["R_weight"] = R_weight
-
-    satellite_inst = satellite(**sat_config)
-    sats.append(satellite_inst)
+    ### Landmark Initialization ###
+    # Import csv data for the lanldmarks
+    landmarks = []
+    with open('landmark_coordinates.csv', newline='',) as csvfile:
+        reader = csv.reader(csvfile, delimiter=',',)
+        for row in reader:
+            landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
 
 
-# Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps;
-x_traj = np.zeros((N+1, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
-# This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
-for sat in sats: 
-    x = sat.x_0
-    for i in range(N+1):
-        x_traj[i,:,sat.id] = x
-        x = rk4_discretization(x, dt)
+    landmarks_ecef = latlon2ecef(landmarks)
+    landmark_objects = []
 
-# Get the positions of the other satellites for each satellite at all N+1 timesteps
-for sat in sats:
-        sat_i = 0 #iterator variable
-        for other_sat in sats:
-            if sat.id != other_sat.id:
-                sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N+1 3D positions of the other satellites from x_traj
-                sat_i += 1
-
-# NOTE: We are only doing these trials for one satellites (for now)
+    # Initialize the landmark objects with their correct name and the ECEF coordinates
+    for landmark_obj in landmarks_ecef:
+        landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 
-## Calculate FIM directly in recursive fashion.
-fim = np.zeros((num_trials,N*state_dim, N*state_dim))
-f_prior = np.zeros((state_dim, state_dim))
-f_post = np.zeros((state_dim, state_dim))
+    ### Satellite Initialization ###
+    with open("config.yaml", "r") as file:
+        config = yaml.safe_load(file)
 
-J = np.zeros((meas_dim, state_dim))
-R_inv = np.linalg.inv(R)
+    sats = []
 
-cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
-sats_copy = copy.deepcopy(sats)
+    for sat_config in config["satellites"]:
+        sat_config["state"] = np.array(sat_config["state"])
 
-filter_position = np.zeros((num_trials, N, 3, n_sats))
-pos_error = np.zeros((num_trials, N , 3, n_sats))
+        # Overwrite the following yaml file parameters with values provided in this script
+        sat_config["N"] = N
+        sat_config["landmarks"] = landmark_objects
+        sat_config["meas_dim"] = meas_dim
+        sat_config["n_sats"] = n_sats
+        sat_config["R_weight"] = R_weight
 
-
-for trial in range(num_trials):
-    print("Monte Carlo Trial: ", trial)
-
-    y_m = jnp.zeros((N,meas_dim,n_sats))
-    H = np.zeros((meas_dim,state_dim))
-    h = np.zeros((meas_dim))
-
-    for i in range(N):
-
-        for sat in sats_copy:
-            sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
-            A = state_transition(sat.x_m)
-            sat.x_p = rk4_discretization(sat.x_m, dt)
-            sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
+        satellite_inst = satellite(**sat_config)
+        sats.append(satellite_inst)
 
 
-        for sat in sats_copy:
-            H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
-            for j in range(bearing_dim,meas_dim):
-                H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
+    # Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps;
+    x_traj = np.zeros((N+1, state_dim, n_sats)) # Discretized trajectory of satellite states over time period
+    # This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
+    for sat in sats: 
+        x = sat.x_0
+        for i in range(N+1):
+            x_traj[i,:,sat.id] = x
+            x = rk4_discretization(x, dt)
 
-            K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
-            
-            # Check if the camera is on for the satellite to take bearing measurements to landmarks
-            if sat.camera_exists:
-                y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects)))
-                h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-            else :
-                y_m = y_m.at[i,0:bearing_dim,sat.id].set(np.zeros((bearing_dim,))) # Set to zero if camera is off
-                h[0:bearing_dim] = np.zeros((bearing_dim,))
-
-            # Range measurements always take place regardless of camera status
-            y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats_copy)) # This sets the range measurement
-
-            for j in range(bearing_dim,meas_dim):
-                h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
-            
-            sat.x_m = sat.x_p + K@(y_m[i,:,sat.id] - h)
-            sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
-
-            cov_hist[i,sat.id,:,:] += sat.cov_m
-
-            filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
-            pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
-
-
-        #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
-        if i > 0:
-            start_i = i * state_dim
-            A = state_transition(sats_copy[0].x_m)
-            f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
-            J[0:bearing_dim,0:3] = sats_copy[0].H_landmark(sats_copy[0].x_m[0:3])
-            for j in range(3,meas_dim): ## Consider checks for nan values
-                J[j,0:3] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m[0:3])
-            f_post = f_prior + J.T@R_inv@J
-            fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
-
-            # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
-    
-    sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
-
-# Average FIM
-fim = np.mean(fim, axis=0)
-
-#Get the average covariance matrix for each satellite for each timestep
-for i in range(N):
+    # Get the positions of the other satellites for each satellite at all N+1 timesteps
     for sat in sats:
-        cov_hist[i,sat.id,:,:] = cov_hist[i,sat.id,:,:]/num_trials
+            sat_i = 0 #iterator variable
+            for other_sat in sats:
+                if sat.id != other_sat.id:
+                    sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N+1 3D positions of the other satellites from x_traj
+                    sat_i += 1
 
-sat1_cov_hist = cov_hist[:,0,:,:]
-
-# The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
-# fim_acc = fim[state_dim:,state_dim:]
-# crb = np.linalg.inv(fim_acc)
-# crb_final = np.zeros((N*state_dim,N*state_dim))
-# crb_final[state_dim:,state_dim:] = crb
-
-# Using pseudo-inverse to invert the matrix
-crb = np.linalg.pinv(fim)
-crb_diag = np.diag(crb)
-
-# Plot the covariance matrix and the FIM diagonal entries.
-
-plt.figure()
-plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
-plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
-plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
-# plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
-# plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
-# plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')
-plt.plot(sat1_cov_hist[:,0,0], label='x position Covariance', color='red', linestyle='--')
-plt.plot(sat1_cov_hist[:,1,1], label='y position Covariance', color='blue', linestyle='--')
-plt.plot(sat1_cov_hist[:,2,2], label='z position Covariance', color='green', linestyle='--')
-# plt.plot(sat1_cov_hist[:,3,3], label='x velocity Covariance', color='red', linestyle='--')
-# plt.plot(sat1_cov_hist[:,4,4], label='y velocity Covariance', color='blue', linestyle='--')
-# plt.plot(sat1_cov_hist[:,5,5], label='z velocity Covariance', color='green', linestyle='--')
-plt.title('Covariance Matrix and CRB for Satellite 1 ')
-plt.xlabel('Timestep')
-# plt.ylabel('Covariance')
-plt.legend()
-# plt.show()
+    # NOTE: We are only doing these trials for one satellites (for now)
 
 
-fig = plt.figure(figsize=(10, 10))
-ax = fig.add_subplot(111, projection='3d')
-time = np.linspace(0, 1, N)  # Normalized time from 0 to 1
-scatter1 = ax.scatter(
-    x_traj[:-1,0,0], 
-    x_traj[:-1,1,0], 
-    x_traj[:-1,2,0],
-    c=time,
-    cmap='viridis',
-    label='Trajectory',
-    marker='o'
-)
-scatter2 = ax.scatter(
-    np.mean(filter_position, axis=0)[:,0,0], 
-    np.mean(filter_position, axis=0)[:,1,0],
-    np.mean(filter_position, axis=0)[:,2,0], 
-    c=time,
-    cmap='plasma', 
-    label='Filtered Position',
-    marker='^'
-)
-cbar = plt.colorbar(scatter2, ax=ax, shrink=0.5, aspect=10)
-# cbar.set_label('Normalized Time')
-cbar2 = plt.colorbar(scatter1, ax=ax, shrink=0.5, aspect=10)
-# cbar2.set_label('Normalized Time')
+    ## Calculate FIM directly in recursive fashion.
+    fim = np.zeros((num_trials,N*state_dim, N*state_dim))
+    f_prior = np.zeros((state_dim, state_dim))
+    f_post = np.zeros((state_dim, state_dim))
 
-ax.set_xlabel('X')
-ax.set_ylabel('Y')
-ax.set_zlabel('Z')
-plt.title('Position Groundtruth for Satellite 1 ')
-plt.legend()
+    J = np.zeros((meas_dim, state_dim))
+    R_inv = np.linalg.inv(R)
 
-# Plot the positional error
-plt.figure()
-error_x = np.abs(np.mean(pos_error,axis=0)[:,0,0])
-error_y = np.abs(np.mean(pos_error,axis=0)[:,1,0])
-error_z = np.abs(np.mean(pos_error,axis=0)[:,2,0])
+    cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
+    sats_copy = copy.deepcopy(sats)
 
-# plt.plot(filter_position[0,:,0,0], label='x position', color='red')
-# plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
-# plt.plot(filter_position[0,:,2,0], label='z position', color='green')
-# plt.plot(x_traj[:,0,0], label='x position truth', color='red', linestyle='--')
-# plt.plot(x_traj[:,1,0], label='y position truth', color='blue', linestyle='--')
-# plt.plot(x_traj[:,2,0], label='z position truth', color='green', linestyle='--')
+    filter_position = np.zeros((num_trials, N, 3, n_sats))
+    pos_error = np.zeros((num_trials, N , 3, n_sats))
 
-plt.plot(error_x, label='x position error', color='red')
-plt.plot(error_y, label='y position error', color='blue')
-plt.plot(error_z, label='z position error', color='green')
-plt.title('Position Groundtruth for Satellite 1 ')
-plt.xlabel('Timestep')
-plt.legend()
-plt.show()
+
+    for trial in range(num_trials):
+        print("Monte Carlo Trial: ", trial)
+
+        y_m = jnp.zeros((N,meas_dim,n_sats))
+        H = np.zeros((meas_dim,state_dim))
+        h = np.zeros((meas_dim))
+
+        for i in range(N):
+
+            for sat in sats_copy:
+                sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
+                A = state_transition(sat.x_m)
+                sat.x_p = rk4_discretization(sat.x_m, dt)
+                sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
+
+
+            for sat in sats_copy:
+                H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
+                for j in range(bearing_dim,meas_dim):
+                    H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
+
+                K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
+                
+                # Check if the camera is on for the satellite to take bearing measurements to landmarks
+                if sat.camera_exists:
+                    y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects)))
+                    h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
+                else :
+                    y_m = y_m.at[i,0:bearing_dim,sat.id].set(np.zeros((bearing_dim,))) # Set to zero if camera is off
+                    h[0:bearing_dim] = np.zeros((bearing_dim,))
+
+                # Range measurements always take place regardless of camera status
+                y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats_copy)) # This sets the range measurement
+
+                for j in range(bearing_dim,meas_dim):
+                    h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
+                
+                sat.x_m = sat.x_p + K@(y_m[i,:,sat.id] - h)
+                sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
+
+                cov_hist[i,sat.id,:,:] += sat.cov_m
+
+                filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
+                pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
+
+
+            #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
+            if i > 0:
+                start_i = i * state_dim
+                A = state_transition(sats_copy[0].x_m)
+                f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
+                J[0:bearing_dim,0:3] = sats_copy[0].H_landmark(sats_copy[0].x_m[0:3])
+                for j in range(3,meas_dim): ## Consider checks for nan values
+                    J[j,0:3] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m[0:3])
+                f_post = f_prior + J.T@R_inv@J
+                fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
+
+                # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
+        
+        sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
+
+    # Average FIM
+    fim = np.mean(fim, axis=0)
+
+    #Get the average covariance matrix for each satellite for each timestep
+    for i in range(N):
+        for sat in sats:
+            cov_hist[i,sat.id,:,:] = cov_hist[i,sat.id,:,:]/num_trials
+
+    sat1_cov_hist = cov_hist[:,0,:,:]
+
+    # The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
+    # fim_acc = fim[state_dim:,state_dim:]
+    # crb = np.linalg.inv(fim_acc)
+    # crb_final = np.zeros((N*state_dim,N*state_dim))
+    # crb_final[state_dim:,state_dim:] = crb
+
+    # Using pseudo-inverse to invert the matrix
+    crb = np.linalg.pinv(fim)
+    crb_diag = np.diag(crb)
+
+    # Plot the covariance matrix and the FIM diagonal entries.
+    plot_covariance_crb(crb_diag, state_dim, sat1_cov_hist)
+
+    # Plot the trajectory of the satellite
+    plot_trajectory(x_traj, filter_position, N)
+
+    # Plot the positional error
+    plot_position_error(pos_error)
+
+    plt.show()
