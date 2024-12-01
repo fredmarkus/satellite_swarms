@@ -1,6 +1,7 @@
-numpy>=1.21.0
-matplotlib>=3.5.0
-pyyaml>=6.0
+argparse>=1.4.0
 cyipopt>=1.0.0
 jax>=0.4.0
 jaxlib>=0.4.0
+matplotlib>=3.5.0
+numpy>=1.21.0
+pyyaml>=6.0

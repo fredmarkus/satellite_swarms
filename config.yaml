@@ -2,7 +2,6 @@
 
 satellites:
   - robot_id: 0
-    state: [6928,0,0,0,0,7.585163531693988]
     pos_cov_init: 1
     vel_cov_init: 0.1
     dim: 6
@@ -11,11 +10,10 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
-    inclination: 90 # define in degrees!
+    orbital_elements: {e: 0.1, a: 7478.0, i: 90.0, omega_dot: 0.0, omega: 90.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
 
   - robot_id: 1
-    state: [0,6928,0,0,0,7.585163531693988]
     pos_cov_init: 1
     vel_cov_init: 0.1
     dim: 6
@@ -24,11 +22,10 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
-    inclination: -15 # define in degrees!
+    orbital_elements: {e: 0.1, a: 7478.0, i: 90.0, omega_dot: 90.0, omega: 45.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
   
   - robot_id: 2
-    state: [4898,4898,0,0,0,7.585163531693988]
     pos_cov_init: 1
     vel_cov_init: 0.1
     dim: 6
@@ -37,7 +34,7 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
-    inclination: 45.0 # define in degrees!
+    orbital_elements: {e: 0.1, a: 7478.0, i: 85.0, omega_dot: 270.0, omega: 60.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
 
   # - robot_id: 3
