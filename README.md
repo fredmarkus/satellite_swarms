@@ -8,15 +8,6 @@ This repo provides code for analyzing satellite swarms. Most of the files are ju
 
 Only v2 and live keep getting developed so any other file does not necessarily have all the features/bug-fixes of these two.
 
-
-## Requirements: 
-
-To run the code, the following packages are needed: 
-- jax
-- cyipopt
-- numpy
-- yaml
-
 Run the following command to setup up the environment:
 
 ```
