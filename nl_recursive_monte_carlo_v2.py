@@ -22,6 +22,8 @@ MASS = 2 # kg # Mass of the satellite
 AREA = 1e-9 # km^2 # Cross-sectional area of the satellite
 SCALE_HEIGHT = 8.4 # km # Scale height of the atmosphere
 C_D = 2.2 # Drag coefficient of the satellite
+EQ_RADIUS = 6378.137 # km # Equatorial radius of the Earth
+POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
 
 DENSITY = ROH_0*np.exp(-(HEIGHT-H_0)/SCALE_HEIGHT) # kg/km^3 # Density of the atmosphere at the height of the satellite
 
@@ -113,7 +115,7 @@ class satellite:
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
-        if self.is_visible(sat_pos):
+        if self.is_visible_ellipse(sat_pos):
             return jnp.linalg.norm(x[0:3] - sat_pos) 
         else:
             return jnp.linalg.norm(0)
@@ -129,6 +131,9 @@ class satellite:
             if sat.id != self.id:
 
                 if self.is_visible(sat.curr_pos): # If the earth is not in the way, we can measure the range
+                    print("Satellite is visible")
+
+                if self.is_visible_ellipse(sat.curr_pos): # If the earth is not in the way, we can measure the range
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
@@ -151,6 +156,29 @@ class satellite:
         return vec/np.linalg.norm(vec)
 
     # TODO: Make it work for elliptical orbits
+    def is_visible_ellipse(self, sat_pos) -> bool:
+        # Check if the earth is in the way of the two satellites
+        d = sat_pos - self.curr_pos
+        A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
+        B = 2*(self.curr_pos[0]*d[0] + self.curr_pos[1]*d[1])/(EQ_RADIUS**2) + 2*self.curr_pos[2]*d[2]/(POLAR_RADIUS**2)
+        C = (self.curr_pos[0]**2 + self.curr_pos[1]**2)/(EQ_RADIUS**2) + (self.curr_pos[2]**2)/(POLAR_RADIUS**2)
+        
+        # Calculate the discriminant
+        discriminant = B**2 - 4*A*(C-1)
+        if discriminant < 0:
+            # Solution does not intersect the earth as no real solutions exist
+            return True
+        
+        # Discriminant is positive, calculate the solutions
+        solution1 = (-B + math.sqrt(discriminant))/(2*A)
+        solution2 = (-B - math.sqrt(discriminant))/(2*A)
+        if ((solution1 > 0 or solution2 > 0) and (solution1 < 1 or solution2 < 1)):
+            #One of the solutions is positive and less than 1, the earth is in the way
+            return False
+        
+        return True
+            
+
     def is_visible(self, sat_pos) -> bool:
         # Check if the earth is in the way of the two satellites
         threshold_angle = math.atan(R_EARTH/R_SAT) # Note this is an approximation based on the assumption of a CIRCULAR orbit and earth
