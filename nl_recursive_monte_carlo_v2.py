@@ -130,9 +130,6 @@ class satellite:
         for sat in sats:
             if sat.id != self.id:
 
-                if self.is_visible(sat.curr_pos): # If the earth is not in the way, we can measure the range
-                    print("Satellite is visible")
-
                 if self.is_visible_ellipse(sat.curr_pos): # If the earth is not in the way, we can measure the range
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
@@ -375,7 +372,6 @@ if __name__ == "__main__":
     sats = []
 
     for sat_config in config["satellites"]:
-        # sat_config["pos_0"] = np.array(sat_config["pos_0"])
 
         # Overwrite the following yaml file parameters with values provided in this script
         sat_config["N"] = N
