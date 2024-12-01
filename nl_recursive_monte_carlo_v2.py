@@ -45,7 +45,6 @@ class satellite:
                  n_sats: int, 
                  landmarks: object,
                  orbital_elements: dict,
-                #  inclination: float,
                  camera_exists: bool) -> None:
         
         # Calculate initial state based on orbital elements placing 
@@ -78,13 +77,8 @@ class satellite:
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
-        # self.inclination = inclination
         self.camera_exists = camera_exists
         # self.inv_cov = jnp.linalg.inv(self.cov_m)
-
-        # #Overwrite the initial state velocities to account for inclination orbital element
-        # self.x_0[4] = float(self.x_0[5]*np.cos(np.radians(self.inclination)))
-        # self.x_0[5] = float(self.x_0[5]*np.sin(np.radians(self.inclination)))
         
         # Initialize the measurement vector with noise
         self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
@@ -121,7 +115,6 @@ class satellite:
             return jnp.linalg.norm(0)
 
     def H_inter_range(self, i, j, x):
-        # vec = [i,j,x]
         jac = jax.jacobian(self.h_inter_range, argnums=2)(i, j, x)
         return jac
 
@@ -311,7 +304,6 @@ def state_transition(x):
     I = np.eye(3)
     A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5) # gravitational derivatives
     A22 = -DENSITY*C_D*AREA/(2*MASS)*(np.outer(x[3:6],x[3:6])/np.linalg.norm(x[3:6]) + I*np.linalg.norm(x[3:6])) # drag derivatives
-    # print(A22) 
     A = np.block([[np.zeros((3,3)), I], [A21, A22]])
     return A
 
