@@ -8,7 +8,8 @@ import jax.numpy as jnp
 import copy
 import argparse
 
-from plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
+from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
+from utils.math_utils import R_X, R_Z
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
@@ -21,6 +22,8 @@ MASS = 2 # kg # Mass of the satellite
 AREA = 1e-9 # km^2 # Cross-sectional area of the satellite
 SCALE_HEIGHT = 8.4 # km # Scale height of the atmosphere
 C_D = 2.2 # Drag coefficient of the satellite
+EQ_RADIUS = 6378.137 # km # Equatorial radius of the Earth
+POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
 
 DENSITY = ROH_0*np.exp(-(HEIGHT-H_0)/SCALE_HEIGHT) # kg/km^3 # Density of the atmosphere at the height of the satellite
 
@@ -32,7 +35,6 @@ class landmark: # Class for the landmark object. Coordinates in ECEF (TODO: Chec
 class satellite:
 
     def __init__(self, 
-                 state: np.ndarray, 
                  pos_cov_init: float, 
                  vel_cov_init: float, 
                  robot_id: int, 
@@ -42,9 +44,31 @@ class satellite:
                  N: int, 
                  n_sats: int, 
                  landmarks: object,
-                 inclination: float,
+                 orbital_elements: dict,
                  camera_exists: bool) -> None:
-        self.x_0 = state
+        
+        # Calculate initial state based on orbital elements placing 
+        a = float(orbital_elements["a"])
+        e = float(orbital_elements["e"])
+        i = np.radians(float(orbital_elements["i"]))
+        omega = np.radians(float(orbital_elements["omega"]))
+        omega_dot = np.radians(float(orbital_elements["omega_dot"]))
+        M = np.radians(float(orbital_elements["M"]))
+        
+        # Position calculation
+        r = a*(1-e**2)/(1+e*np.cos(M))
+        perifocal = np.array([r*np.cos(M), r*np.sin(M), 0])
+        Q = R_X(-omega_dot)@R_Z(-omega)@R_X(-i)
+        pos_0 = Q@perifocal
+
+        # Velocity calculation
+        MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
+        v_x = -math.sqrt(MU/a)*np.sin(M)/(1+e*np.cos(M))
+        v_y = math.sqrt(MU/a)*(e + np.cos(M))/(1+e*np.cos(M))
+        v_z = 0
+        vel_0 = Q@np.array([v_x, v_y, v_z])
+    
+        self.x_0 = np.append(pos_0,vel_0) # Initial state vector of the satellite
         self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
@@ -53,13 +77,8 @@ class satellite:
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
-        self.inclination = inclination
         self.camera_exists = camera_exists
         # self.inv_cov = jnp.linalg.inv(self.cov_m)
-
-        #Overwrite the initial state velocities to account for inclination orbital element
-        self.x_0[4] = float(self.x_0[5]*np.cos(np.radians(self.inclination)))
-        self.x_0[5] = float(self.x_0[5]*np.sin(np.radians(self.inclination)))
         
         # Initialize the measurement vector with noise
         self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
@@ -90,13 +109,12 @@ class satellite:
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-3 # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
-        if self.is_visible(sat_pos):
+        if self.is_visible_ellipse(sat_pos):
             return jnp.linalg.norm(x[0:3] - sat_pos) 
         else:
             return jnp.linalg.norm(0)
 
     def H_inter_range(self, i, j, x):
-        # vec = [i,j,x]
         jac = jax.jacobian(self.h_inter_range, argnums=2)(i, j, x)
         return jac
 
@@ -105,7 +123,7 @@ class satellite:
         for sat in sats:
             if sat.id != self.id:
 
-                if self.is_visible(sat.curr_pos): # If the earth is not in the way, we can measure the range
+                if self.is_visible_ellipse(sat.curr_pos): # If the earth is not in the way, we can measure the range
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
@@ -127,6 +145,29 @@ class satellite:
         vec = (self.curr_pos  - self.min_landmark_list[-1]) + noise
         return vec/np.linalg.norm(vec)
 
+    # TODO: Make it work for elliptical orbits
+    def is_visible_ellipse(self, sat_pos) -> bool:
+        # Check if the earth is in the way of the two satellites
+        d = sat_pos - self.curr_pos
+        A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
+        B = 2*(self.curr_pos[0]*d[0] + self.curr_pos[1]*d[1])/(EQ_RADIUS**2) + 2*self.curr_pos[2]*d[2]/(POLAR_RADIUS**2)
+        C = (self.curr_pos[0]**2 + self.curr_pos[1]**2)/(EQ_RADIUS**2) + (self.curr_pos[2]**2)/(POLAR_RADIUS**2)
+        
+        # Calculate the discriminant
+        discriminant = B**2 - 4*A*(C-1)
+        if discriminant < 0:
+            # Solution does not intersect the earth as no real solutions exist
+            return True
+        
+        # Discriminant is positive, calculate the solutions
+        solution1 = (-B + math.sqrt(discriminant))/(2*A)
+        solution2 = (-B - math.sqrt(discriminant))/(2*A)
+        if ((solution1 > 0 or solution2 > 0) and (solution1 < 1 or solution2 < 1)):
+            #One of the solutions is positive and less than 1, the earth is in the way
+            return False
+        
+        return True
+            
 
     def is_visible(self, sat_pos) -> bool:
         # Check if the earth is in the way of the two satellites
@@ -263,7 +304,6 @@ def state_transition(x):
     I = np.eye(3)
     A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5) # gravitational derivatives
     A22 = -DENSITY*C_D*AREA/(2*MASS)*(np.outer(x[3:6],x[3:6])/np.linalg.norm(x[3:6]) + I*np.linalg.norm(x[3:6])) # drag derivatives
-    # print(A22) 
     A = np.block([[np.zeros((3,3)), I], [A21, A22]])
     return A
 
@@ -272,8 +312,8 @@ if __name__ == "__main__":
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
     parser.add_argument('--N', type=int, default=400, help='Number of timesteps')
-    parser.add_argument('--f', type=int, default=1, help='Frequency of the simulation')
-    parser.add_argument('--n_sats', type=int, default=3, help='Number of satellites')
+    parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
+    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
     parser.add_argument('--R_weight', type=float, default=10e-4, help='Measurement noise weight')
     parser.add_argument('--bearing_dim', type=int, default=3, help='Dimension of the bearing measurement')
     parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
@@ -282,11 +322,12 @@ if __name__ == "__main__":
 
     N = args.N
     f = args.f #Hz
-    dt = 1/f
     n_sats = args.n_sats
     R_weight = args.R_weight
     bearing_dim = args.bearing_dim
     state_dim = args.state_dim
+
+    dt = 1/f
     meas_dim = n_sats-1 + bearing_dim   
     R = np.eye(meas_dim)*R_weight
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
@@ -323,7 +364,6 @@ if __name__ == "__main__":
     sats = []
 
     for sat_config in config["satellites"]:
-        sat_config["state"] = np.array(sat_config["state"])
 
         # Overwrite the following yaml file parameters with values provided in this script
         sat_config["N"] = N
