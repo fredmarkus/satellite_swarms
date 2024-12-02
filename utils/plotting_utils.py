@@ -75,7 +75,7 @@ def plot_position_error(pos_error):
     plt.plot(error_x, label='x position error', color='red')
     plt.plot(error_y, label='y position error', color='blue')
     plt.plot(error_z, label='z position error', color='green')
-    plt.title('Position Groundtruth for Satellite 1 ')
+    plt.title('Absolute Position Error for Satellite 1 ')
     plt.xlabel('Timestep')
     plt.legend()
 plot_covariance_crb

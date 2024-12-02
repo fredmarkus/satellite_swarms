@@ -1,15 +1,15 @@
-import numpy as np
-import matplotlib.pyplot as plt
+import argparse
+import copy
 import csv
-import math
-import yaml
 import jax
 import jax.numpy as jnp
-import copy
-import argparse
+import math
+import matplotlib.pyplot as plt
+import numpy as np
+import yaml
 
-from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 from utils.math_utils import R_X, R_Z
+from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
@@ -24,6 +24,7 @@ SCALE_HEIGHT = 8.4 # km # Scale height of the atmosphere
 C_D = 2.2 # Drag coefficient of the satellite
 EQ_RADIUS = 6378.137 # km # Equatorial radius of the Earth
 POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
+J2 = 1.08263e-3 # J2 perturbation coefficient
 
 DENSITY = ROH_0*np.exp(-(HEIGHT-H_0)/SCALE_HEIGHT) # kg/km^3 # Density of the atmosphere at the height of the satellite
 
@@ -62,7 +63,6 @@ class satellite:
         pos_0 = Q@perifocal
 
         # Velocity calculation
-        MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
         v_x = -math.sqrt(MU/a)*np.sin(M)/(1+e*np.cos(M))
         v_y = math.sqrt(MU/a)*(e + np.cos(M))/(1+e*np.cos(M))
         v_z = 0
@@ -81,10 +81,10 @@ class satellite:
         # self.inv_cov = jnp.linalg.inv(self.cov_m)
         
         # Initialize the measurement vector with noise
-        self.x_m = self.x_0 + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        # x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=int(self.dim/2))
-        # x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
-        # self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
+        self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=int(self.dim/2))
+        x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
+        self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
 
         self.x_p = self.x_m
         self.cov_p = self.cov_m # Initialize the prior covariance the same as the measurement covariance
@@ -145,7 +145,6 @@ class satellite:
         vec = (self.curr_pos  - self.min_landmark_list[-1]) + noise
         return vec/np.linalg.norm(vec)
 
-    # TODO: Make it work for elliptical orbits
     def is_visible_ellipse(self, sat_pos) -> bool:
         # Check if the earth is in the way of the two satellites
         d = sat_pos - self.curr_pos
@@ -247,12 +246,26 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
     
     return ecef.reshape(-1,4)
 
-# TODO: Add J2 dynamics in discretization and state transitionk
+def gravitational_acceleration(r):
+    return (-MU / (jnp.linalg.norm(r)**3)) * r
 
 def atmospheric_drag(v):
     drag = (-0.5*C_D*DENSITY*AREA*v*np.linalg.norm(v)**2)/MASS
     return drag
 
+def j2_dynamics(r):
+    r_norm = jnp.linalg.norm(r)
+
+    F = 3*MU*J2*EQ_RADIUS**2/(2*r_norm**5)
+    a_x = F*(r[0])*(5*(r[2]/r_norm)**2 - 1)
+    a_y = F*(r[1])*(5*(r[2]/r_norm)**2 - 1)
+    a_z = F*(r[2])*(5*(r[2]/r_norm)**2 - 3)
+
+    return jnp.array([a_x, a_y, a_z])
+
+def j2_jacobian(r):
+    jac = jax.jacobian(j2_dynamics)(r)
+    return jac
 
 # Numerical solution using RK4 method
 def rk4_discretization(x, dt: float):
@@ -265,7 +278,7 @@ def rk4_discretization(x, dt: float):
 
     def dv_dt(r, v):
         """Derivative of v with respect to time is gravitational acceleration."""
-        return (-MU / (jnp.linalg.norm(r)**3)) * r + atmospheric_drag(v)
+        return gravitational_acceleration(r) + atmospheric_drag(v) + j2_dynamics(r)
 
     # Calculate k1 for r and v
     k1_r = dr_dt(v)
@@ -302,9 +315,16 @@ def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
 
 def state_transition(x):
     I = np.eye(3)
-    A21 = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5) # gravitational derivatives
-    A22 = -DENSITY*C_D*AREA/(2*MASS)*(np.outer(x[3:6],x[3:6])/np.linalg.norm(x[3:6]) + I*np.linalg.norm(x[3:6])) # drag derivatives
-    A = np.block([[np.zeros((3,3)), I], [A21, A22]])
+    # Account for j2 dynamics
+    j2_jac = j2_jacobian(x[0:3])
+    
+    # Account for gravitational acceleration
+    grav_jac = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5)
+    
+    # Account for atmospheric drag
+    drag_jac = -DENSITY*C_D*AREA/(2*MASS)*(np.outer(x[3:6],x[3:6])/np.linalg.norm(x[3:6]) + I*np.linalg.norm(x[3:6]))
+    
+    A = np.block([[np.zeros((3,3)), I], [grav_jac+j2_jac, drag_jac]])
     return A
 
 if __name__ == "__main__":
