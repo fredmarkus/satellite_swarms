@@ -45,22 +45,31 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
             - Y (float): The ECEF Y coordinate in kilometers.
             - Z (float): The ECEF Z coordinate in kilometers.
     """
-    ecef = np.array([])
-    a = 6378.137
-    b = 6356.7523
-    e = 1 - (b**2/a**2)
+    ecef = []
+    e_sq = 1 - (POLAR_RADIUS**2/EQ_RADIUS**2)
     
     # helper function
     def N(a,b,lat):
-        return a**2/np.sqrt(a**2*np.cos(lat)**2 + b**2*np.sin(lat)**2)
+        return a**2 / np.sqrt(a**2 * np.cos(lat)**2 + b**2 * np.sin(lat)**2)
     
     for landmark in landmarks:
-        X = (N(a,b,float(landmark[1])) + float(landmark[3]))*np.cos(float(landmark[1]))*np.cos(float(landmark[2]))
-        Y = (N(a,b,float(landmark[1])) + float(landmark[3]))*np.cos(float(landmark[1]))*np.sin(float(landmark[2]))
-        Z = (N(a,b,float(landmark[1]))*(1-e) + float(landmark[3]))*np.sin(float(landmark[1]))
-        ecef = np.append(ecef, np.array([landmark[0],X,Y,Z]), axis=0)
+        lat_deg = float(landmark[1])
+        lon_deg = float(landmark[2])
+        h = float(landmark[3])
+
+        # Convert degrees to radians
+        lat_rad = np.deg2rad(lat_deg)
+        lon_rad = np.deg2rad(lon_deg)
+
+        N_val = N(EQ_RADIUS, POLAR_RADIUS, lat_rad)
+        X = (N_val + h) * np.cos(lat_rad) * np.cos(lon_rad)
+        Y = (N_val + h) * np.cos(lat_rad) * np.sin(lon_rad)
+        Z = (N_val * (1 - e_sq) + h) * np.sin(lat_rad)
+
+        ecef.append([landmark[0], X, Y, Z])
+
     
-    return ecef.reshape(-1,4)
+    return np.array(ecef)
 
 def gravitational_acceleration(r):
     return (-MU / (jnp.linalg.norm(r)**3)) * r
@@ -147,36 +156,6 @@ def state_transition(x):
 
 if __name__ == "__main__":
     ## MAIN LOOP START; TODO: Implement this into a main loop and make argparse callable
-    #General Parameters
-    parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
-    parser.add_argument('--N', type=int, default=400, help='Number of timesteps')
-    parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
-    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
-    parser.add_argument('--R_weight', type=float, default=10e-4, help='Measurement noise weight')
-    parser.add_argument('--bearing_dim', type=int, default=3, help='Dimension of the bearing measurement')
-    parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
-    parser.add_argument('--num_trials', type=int, default=2, help='Number of Monte Carlo trials')
-    args = parser.parse_args()
-
-    N = args.N
-    f = args.f #Hz
-    n_sats = args.n_sats
-    R_weight = args.R_weight
-    bearing_dim = args.bearing_dim
-    state_dim = args.state_dim
-
-    dt = 1/f
-    meas_dim = n_sats-1 + bearing_dim   
-    R = np.eye(meas_dim)*R_weight
-    # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
-    # page 6
-    Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
-
-    #MC Parameters
-    num_trials = args.num_trials
-
-    # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
-    # np.random.seed(42)        #Set seed for reproducibility
 
     ### Landmark Initialization ###
     # Import csv data for the lanldmarks
@@ -195,6 +174,37 @@ if __name__ == "__main__":
         landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
 
 
+    #General Parameters
+    parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
+    parser.add_argument('--N', type=int, default=100, help='Number of timesteps')
+    parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
+    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
+    parser.add_argument('--R_weight', type=float, default=10e-4, help='Measurement noise weight')
+    parser.add_argument('--bearing_dim', type=int, default=3, help='Dimension of the bearing measurement')
+    parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
+    parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
+    args = parser.parse_args()
+
+    N = args.N
+    f = args.f #Hz
+    n_sats = args.n_sats
+    R_weight = args.R_weight
+    state_dim = args.state_dim
+
+    bearing_dim = len(landmark_objects)*3
+    dt = 1/f
+    meas_dim = n_sats-1 + bearing_dim   
+    R = np.eye(meas_dim)*R_weight
+    # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
+    # page 6
+    Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
+
+    #MC Parameters
+    num_trials = args.num_trials
+
+    # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
+    # np.random.seed(42)        #Set seed for reproducibility
+
     ### Satellite Initialization ###
     with open("config.yaml", "r") as file:
         config = yaml.safe_load(file)
@@ -209,6 +219,7 @@ if __name__ == "__main__":
         sat_config["meas_dim"] = meas_dim
         sat_config["n_sats"] = n_sats
         sat_config["R_weight"] = R_weight
+        sat_config["bearing_dim"] = bearing_dim
 
         satellite_inst = satellite(**sat_config)
         sats.append(satellite_inst)
@@ -252,12 +263,12 @@ if __name__ == "__main__":
     for trial in range(num_trials):
         print("Monte Carlo Trial: ", trial)
 
-        y_m = jnp.zeros((N,meas_dim,n_sats))
+        y_m = np.zeros((N,meas_dim,n_sats))
         H = np.zeros((meas_dim,state_dim))
         h = np.zeros((meas_dim))
 
         for i in range(N):
-            print(i)
+            print("Timestep: ", i)
 
             for sat in sats_copy:
                 sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
@@ -267,26 +278,21 @@ if __name__ == "__main__":
 
 
             for sat in sats_copy:
+                #Calculate H
                 H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
                 for j in range(bearing_dim,meas_dim):
                     H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
-
+                #Calculate K
                 K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
-                
-                # Check if the camera is on for the satellite to take bearing measurements to landmarks
-                if sat.camera_exists:
-                    y_m = y_m.at[i,0:bearing_dim,sat.id].set(sat.measure_z_landmark(tuple(landmark_objects)))
-                    h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-                else :
-                    y_m = y_m.at[i,0:bearing_dim,sat.id].set(np.zeros((bearing_dim,))) # Set to zero if camera is off
-                    h[0:bearing_dim] = np.zeros((bearing_dim,))
 
-                # Range measurements always take place regardless of camera status
-                y_m = y_m.at[i,bearing_dim:meas_dim,sat.id].set(sat.measure_z_range(sats_copy)) # This sets the range measurement
-
+                #Calculate h
+                h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
                 for j in range(bearing_dim,meas_dim):
                     h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
-                
+
+                y_m[i,0:bearing_dim,sat.id] = sat.measure_z_landmark()
+                y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats_copy)
+
                 sat.x_m = sat.x_p + K@(y_m[i,:,sat.id] - h)
                 sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
 
@@ -302,7 +308,7 @@ if __name__ == "__main__":
                 A = state_transition(sats_copy[0].x_m)
                 f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
                 J[0:bearing_dim,0:3] = sats_copy[0].H_landmark(sats_copy[0].x_m[0:3])
-                for j in range(3,meas_dim): ## Consider checks for nan values
+                for j in range(bearing_dim,meas_dim): ## Consider checks for nan values
                     J[j,0:3] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m[0:3])
                 f_post = f_prior + J.T@R_inv@J
 

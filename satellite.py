@@ -20,6 +20,7 @@ class satellite:
                  vel_cov_init: float, 
                  robot_id: int, 
                  dim: int, 
+                 bearing_dim: int,
                  meas_dim: int, 
                  R_weight: float, 
                  N: int, 
@@ -60,6 +61,7 @@ class satellite:
         self.landmarks = landmarks
         self.camera_exists = camera_exists
         self.camera_fov = camera_fov
+        self.bearing_dim = bearing_dim  
         
         # Initialize the measurement vector with noise
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
@@ -70,17 +72,22 @@ class satellite:
         self.x_p = self.x_m
         self.cov_p = self.cov_m # Initialize the prior covariance the same as the measurement covariance
 
-        self.min_landmark_list = None # Initialize an array of the closest landmark to the satellite t
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
         # self.sats_visible = np.zeros((N,n_sats-1)) # Determines whether the other satellites are visible to this satellite
 
 
     def h_landmark(self, x):
-        min_landmark = self.closest_landmark(x, self.landmarks)
-        norm = jnp.sqrt((x[0] - min_landmark[0])**2 + (x[1] - min_landmark[1])**2 + (x[2] - min_landmark[2])**2)
-        
-        return (x[0:3] - min_landmark)/norm
+        h = jnp.zeros((len(self.landmarks)*3))
+        if self.camera_exists:
+            for i, landmark in enumerate(self.landmarks):
+                if self.landmark_visible(x[0:3], landmark.pos):
+                    norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
+                    h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
+                    # h[i*3:i*3+3] = (x[0:3] - landmark.pos)/norm
+
+                    #if not true, the landmark is not visible and we do not consider an estimate        
+        return h
 
     def H_landmark(self, x):
         # Use jax to autodifferentiate
@@ -88,9 +95,9 @@ class satellite:
         return jac
 
     def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
-        sat_id = j-3 # j is the range measurement index starting from 3
+        sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[i,:,sat_id]
-        if self.is_visible_ellipse(sat_pos):
+        if self.is_visible_ellipse(x[0:3], sat_pos):
             return jnp.linalg.norm(x[0:3] - sat_pos) 
         else:
             return jnp.linalg.norm(0)
@@ -104,7 +111,8 @@ class satellite:
         for sat in sats:
             if sat.id != self.id:
 
-                if self.is_visible_ellipse(sat.curr_pos): # If the earth is not in the way, we can measure the range
+                if self.is_visible_ellipse(self.curr_pos, sat.curr_pos): # If the earth is not in the way, we can measure the range
+                    print(f"Satellite {self.id} can see satellite {sat.id}")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
@@ -115,23 +123,23 @@ class satellite:
                     z = np.append(z,np.array([0]),axis=0)
         return z
     
-    def measure_z_landmark(self, landmarks: list) -> np.ndarray:
-        # Determine the closest landmark to the satellite at the current state and calculate the bearing to that landmark
-        if self.min_landmark_list is None:
-            self.min_landmark_list = np.array([self.closest_landmark(self.curr_pos, landmarks)]).reshape(1,3)
-        else:
-            self.min_landmark_list = np.append(self.min_landmark_list,[self.closest_landmark(self.curr_pos, landmarks)],axis=0)
-        
-        noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-        vec = (self.curr_pos  - self.min_landmark_list[-1]) + noise
-        return vec/np.linalg.norm(vec)
+    def measure_z_landmark(self) -> np.ndarray:
+        z_l = np.zeros((len(self.landmarks)*3))
+        if self.camera_exists:
+            for i, landmark in enumerate(self.landmarks):
+                if self.landmark_visible(self.curr_pos, landmark.pos):
+                    print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
+                    vec = self.curr_pos - landmark.pos + noise
+                    z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
+        return z_l
 
-    def is_visible_ellipse(self, sat_pos) -> bool:
-        # Check if the earth is in the way of the two satellites
-        d = sat_pos - self.curr_pos
+    def is_visible_ellipse(self, own_pos, other_pos) -> bool:
+        # Check if the earth is in the way of the own position and the other position
+        d = other_pos - own_pos
         A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
-        B = 2*(self.curr_pos[0]*d[0] + self.curr_pos[1]*d[1])/(EQ_RADIUS**2) + 2*self.curr_pos[2]*d[2]/(POLAR_RADIUS**2)
-        C = (self.curr_pos[0]**2 + self.curr_pos[1]**2)/(EQ_RADIUS**2) + (self.curr_pos[2]**2)/(POLAR_RADIUS**2)
+        B = 2*(own_pos[0]*d[0] + own_pos[1]*d[1])/(EQ_RADIUS**2) + 2*own_pos[2]*d[2]/(POLAR_RADIUS**2)
+        C = (own_pos[0]**2 + own_pos[1]**2)/(EQ_RADIUS**2) + (own_pos[2]**2)/(POLAR_RADIUS**2)
         
         # Calculate the discriminant
         discriminant = B**2 - 4*A*(C-1)
@@ -140,36 +148,34 @@ class satellite:
             return True
         
         # Discriminant is positive, calculate the solutions
-        solution1 = (-B + math.sqrt(discriminant))/(2*A)
-        solution2 = (-B - math.sqrt(discriminant))/(2*A)
+        solution1 = (-B + jnp.sqrt(discriminant))/(2*A)
+        solution2 = (-B - jnp.sqrt(discriminant))/(2*A)
         if ((solution1 > 0 or solution2 > 0) and (solution1 < 1 or solution2 < 1)):
             #One of the solutions is positive and less than 1, the earth is in the way
             return False
         
         return True
     
-    def closest_landmark(self, pos, landmarks: list) -> object:
-        """
-        Find the closest landmark position to the current position.
+    def landmark_visible(self, pos, landmark_pos) -> bool:
+        # Check if a landmark can be seen from the current position of the satellite when taking a picture
+        # Assuming that the camera is pointing straight down
+        # FOV is about 60 degrees 
+        # ASSUMPTION: The satellite is flying at an altitude of around 550km consistently
+        # Otherwise we need a separate way to determine the altitude of the satellite 
+        # First check if the landmark is blocked by earth. 
+        # If it is not check if the landmark is within the field of view of the camera
+        
+        # TODO: Speed up by doing calculation just once and passing it to this function so only the theta_l has to be calculated
+        height = 550
 
-        Args:
-            pos (np.ndarray): The current position of the satellite.
-            landmarks (list): A list of landmark objects, each having a 'pos' attribute.
-
-        Returns:
-            The position of the landmark object that is closest to the current position. 
-            If no landmarks are provided, returns None.
-        """
-        min_dist = np.inf
-        closest_landmark = None
-
-        for landmark in landmarks:
-            dist = jnp.linalg.norm(pos[0:3] - landmark.pos)
-            if dist < min_dist:
-                min_dist = dist
-                closest_landmark = landmark
-
-        # print(f"Closest landmark to satellite at position {pos} is {closest_landmark.name} at position {closest_landmark.pos}")
-        if closest_landmark is None:
-            return np.array([0,0,0])
-        return closest_landmark.pos
+        norm_vec_sat = pos/jnp.linalg.norm(pos)
+        
+        # Calculate a vector to the earth's surface
+        r_earth = pos - height*norm_vec_sat
+        theta_t = (height/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
+        theta_l = jnp.rad2deg(jnp.arccos(jnp.dot(r_earth,landmark_pos)/(jnp.linalg.norm(r_earth)*jnp.linalg.norm(landmark_pos))))
+        
+        if theta_l < theta_t:
+            return True
+        else:
+            return False
