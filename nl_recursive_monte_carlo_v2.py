@@ -8,16 +8,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from utils.math_utils import R_X, R_Z
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 from landmark import landmark
 from satellite import satellite
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
-R_EARTH = 6378 # km # Radius of the earth
 HEIGHT = 550 # km # Height of the satellite
-R_SAT = HEIGHT + R_EARTH
 ROH_0 = 1.225e9 # kg/km^3 # Density of air at sea level
 H_0 = 0 # km # Height of sea level
 MASS = 2 # kg # Mass of the satellite
@@ -68,6 +65,8 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
 def gravitational_acceleration(r):
     return (-MU / (jnp.linalg.norm(r)**3)) * r
 
+# TODO: Refactor to make this dependent on the satellite object specifically. 
+# Reason: We assume that all satellites have the same mass and area values which is not necessarily true
 def atmospheric_drag(v):
     drag = (-0.5*C_D*DENSITY*AREA*v*np.linalg.norm(v)**2)/MASS
     return drag
@@ -258,6 +257,7 @@ if __name__ == "__main__":
         h = np.zeros((meas_dim))
 
         for i in range(N):
+            print(i)
 
             for sat in sats_copy:
                 sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
@@ -307,11 +307,11 @@ if __name__ == "__main__":
                 f_post = f_prior + J.T@R_inv@J
 
                 # Check if f_post is invertible
-                if np.linalg.matrix_rank(f_post) == state_dim:
-                    print("FIM is invertible")
-                else: 
-                    print("FIM is not invertible")
-                    print(f_post)
+                # if np.linalg.matrix_rank(f_post) == state_dim:
+                #     print("FIM is invertible")
+                # else: 
+                #     print("FIM is not invertible")
+                #     print(f_post)
                 fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
 
                 # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")

@@ -8,18 +8,10 @@ from utils.math_utils import R_X, R_Z
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
-R_EARTH = 6378 # km # Radius of the earth
-HEIGHT = 550 # km # Height of the satellite
-R_SAT = HEIGHT + R_EARTH
-ROH_0 = 1.225e9 # kg/km^3 # Density of air at sea level
-H_0 = 0 # km # Height of sea level
 MASS = 2 # kg # Mass of the satellite
 AREA = 1e-9 # km^2 # Cross-sectional area of the satellite
-SCALE_HEIGHT = 8.4 # km # Scale height of the atmosphere
-C_D = 2.2 # Drag coefficient of the satellite
 EQ_RADIUS = 6378.1370 # km # Equatorial radius of the Earth
 POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
-J2 = 1.08263e-3 # J2 perturbation coefficient
 
 class satellite:
 
@@ -152,22 +144,6 @@ class satellite:
         solution2 = (-B - math.sqrt(discriminant))/(2*A)
         if ((solution1 > 0 or solution2 > 0) and (solution1 < 1 or solution2 < 1)):
             #One of the solutions is positive and less than 1, the earth is in the way
-            return False
-        
-        return True
-            
-
-    def is_visible(self, sat_pos) -> bool:
-        # Check if the earth is in the way of the two satellites
-        threshold_angle = math.atan(R_EARTH/R_SAT) # Note this is an approximation based on the assumption of a CIRCULAR orbit and earth
-        # Calculate the angle between the two satellites
-        vec = sat_pos - self.curr_pos
-        vec_earth = np.array([0,0,0]) - self.curr_pos
-        # Calculate the angle between the two vector
-        #Some instances floating point errors may arise. Round to 6 d.p.
-        angle = math.acos(round(np.dot(vec,vec_earth)/(np.linalg.norm(vec)*np.linalg.norm(vec_earth)),6)) 
-        
-        if abs(angle) < threshold_angle:
             return False
         
         return True
