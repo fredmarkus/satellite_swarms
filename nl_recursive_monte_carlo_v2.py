@@ -247,8 +247,6 @@ if __name__ == "__main__":
 
     ## Calculate FIM directly in recursive fashion.
     fim = np.zeros((num_trials,N*state_dim, N*state_dim))
-    f_prior = np.zeros((state_dim, state_dim))
-    f_post = np.zeros((state_dim, state_dim))
 
     J = np.zeros((meas_dim, state_dim))
     R_inv = np.linalg.inv(R)
@@ -266,6 +264,8 @@ if __name__ == "__main__":
         y_m = np.zeros((N,meas_dim,n_sats))
         H = np.zeros((meas_dim,state_dim))
         h = np.zeros((meas_dim))
+        f_prior = np.zeros((state_dim, state_dim))
+        f_post = np.zeros((state_dim, state_dim))
 
         for i in range(N):
             print("Timestep: ", i)
@@ -302,22 +302,29 @@ if __name__ == "__main__":
                 pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
 
 
+            # Calculate the FIM for satellite 0
+            A = state_transition(sats_copy[0].x_m)
+            f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
+            # print(sats_copy[0].H_landmark(sats_copy[0].x_m))
+            J[0:bearing_dim,0:state_dim] = sats_copy[0].H_landmark(sats_copy[0].x_m)
+            for j in range(bearing_dim,meas_dim): ## Consider checks for nan values
+                J[j,0:state_dim] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m)
+            f_post = f_prior + J.T@R_inv@J
+
+            # Check if f_post is invertible
+            if np.linalg.matrix_rank(f_post) != state_dim:
+                print(f_post)
+                print("FIM is not invertible")
+
+            else:
+                eig_val, eig_vec = np.linalg.eig(f_post)
+                print("Eigenvalues of FIM: ", eig_val)
+                # print("Condition number of FIM: ", np.linalg.cond(f_post))
+                print("Eigenvectors of FIM: ", eig_vec)
+                
             #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
             if i > 0:
                 start_i = i * state_dim
-                A = state_transition(sats_copy[0].x_m)
-                f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
-                J[0:bearing_dim,0:3] = sats_copy[0].H_landmark(sats_copy[0].x_m[0:3])
-                for j in range(bearing_dim,meas_dim): ## Consider checks for nan values
-                    J[j,0:3] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m[0:3])
-                f_post = f_prior + J.T@R_inv@J
-
-                # Check if f_post is invertible
-                # if np.linalg.matrix_rank(f_post) == state_dim:
-                #     print("FIM is invertible")
-                # else: 
-                #     print("FIM is not invertible")
-                #     print(f_post)
                 fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
 
                 # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")

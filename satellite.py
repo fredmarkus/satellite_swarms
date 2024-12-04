@@ -84,7 +84,6 @@ class satellite:
                 if self.landmark_visible(x[0:3], landmark.pos):
                     norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
                     h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
-                    # h[i*3:i*3+3] = (x[0:3] - landmark.pos)/norm
 
                     #if not true, the landmark is not visible and we do not consider an estimate        
         return h
@@ -112,7 +111,7 @@ class satellite:
             if sat.id != self.id:
 
                 if self.is_visible_ellipse(self.curr_pos, sat.curr_pos): # If the earth is not in the way, we can measure the range
-                    print(f"Satellite {self.id} can see satellite {sat.id}")
+                    # print(f"Satellite {self.id} can see satellite {sat.id}")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
@@ -124,14 +123,17 @@ class satellite:
         return z
     
     def measure_z_landmark(self) -> np.ndarray:
+        # limit = np.inf # Use limit to check only the next 8 landmarks after one landmark is seen as the rest cannot be visible
         z_l = np.zeros((len(self.landmarks)*3))
         if self.camera_exists:
             for i, landmark in enumerate(self.landmarks):
                 if self.landmark_visible(self.curr_pos, landmark.pos):
-                    print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                    # limit = i+8
+                    # print(f"Satellite {self.id} can see landmark {landmark.name} visible")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
                     vec = self.curr_pos - landmark.pos + noise
                     z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
+
         return z_l
 
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
@@ -165,7 +167,7 @@ class satellite:
         # First check if the landmark is blocked by earth. 
         # If it is not check if the landmark is within the field of view of the camera
         
-        # TODO: Speed up by doing calculation just once and passing it to this function so only the theta_l has to be calculated
+        # TODO: Speed up by doing theta_t calculation just once and passing it to this function so only the theta_l has to be calculated
         height = 550
 
         norm_vec_sat = pos/jnp.linalg.norm(pos)
