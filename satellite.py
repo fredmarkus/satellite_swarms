@@ -129,7 +129,7 @@ class satellite:
             for i, landmark in enumerate(self.landmarks):
                 if self.landmark_visible(self.curr_pos, landmark.pos):
                     # limit = i+8
-                    # print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                    print(f"Satellite {self.id} can see landmark {landmark.name} visible")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
                     vec = self.curr_pos - landmark.pos + noise
                     z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
