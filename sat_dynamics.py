@@ -24,7 +24,7 @@ def gravitational_acceleration(r):
 # TODO: Refactor to make this dependent on the satellite object specifically. 
 # Reason: We assume that all satellites have the same mass and area values which is not necessarily true
 def atmospheric_drag(v):
-    drag = (-0.5*C_D*DENSITY*AREA*v*np.linalg.norm(v)**2)/MASS
+    drag = (-0.5*C_D*DENSITY*AREA*v*jnp.linalg.norm(v)**2)/MASS
     return drag
 
 def j2_dynamics(r):
@@ -52,7 +52,7 @@ def rk4_discretization(x, dt: float):
 
     def dv_dt(r, v):
         """Derivative of v with respect to time is gravitational acceleration."""
-        return gravitational_acceleration(r) + j2_dynamics(r) #+ atmospheric_drag(v)
+        return gravitational_acceleration(r) + j2_dynamics(r) + atmospheric_drag(v)
 
     # Calculate k1 for r and v
     k1_r = dr_dt(v)

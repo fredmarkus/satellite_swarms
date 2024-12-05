@@ -5,17 +5,7 @@ import jax.numpy as jnp
 from sat_dynamics import rk4_discretization
 
 class trajSolver:
-    def __init__(self, 
-                 x_traj, 
-                 y_m, 
-                 sat, 
-                 N, 
-                 meas_dim, 
-                 bearing_dim, 
-                 n_sats, 
-                 MU, 
-                 state_dim,
-                 dt):
+    def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim, dt):
         self.x_traj = x_traj
         self.y_m = y_m
         self.sat = sat
@@ -24,24 +14,23 @@ class trajSolver:
         self.bearing_dim = bearing_dim
         self.n_sats = n_sats
         self.MU = MU
-        self.cov = self.sat.R_weight*np.eye(3)
-        self.inv_cov = jnp.linalg.inv(self.cov)
         self.state_dim = state_dim
         self.dt = dt
+        self.cov = self.sat.R_weight*np.eye(self.meas_dim)
+        self.inv_cov = np.linalg.inv(self.cov)
 
     def objective(self, x):
         obj = 0
         for i in range(self.N):
             start_i = i*6
             start_i1 = (i+1)*6
-            obj += (self.y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(self.y_m[i,0:3,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
+            obj += (self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
             # add the dynamics to the objective
             if i < self.N-1: # Don't add the dynamics optimization for the last time step
                 obj += (x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))@(x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))
-            for j in range(3,self.meas_dim):
+            for j in range(self.bearing_dim,self.meas_dim):
                 # print(j, y_m[i,j,self.sat.id])
-                if not np.isnan(self.y_m[i,j,self.sat.id]): # Only add to the objective function if the satellites can measure a range. Otherwise ignore
-                    obj += (1/self.sat.R_weight)*(self.y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+                obj += (1/self.sat.R_weight)*(self.y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
         return obj
     
 
