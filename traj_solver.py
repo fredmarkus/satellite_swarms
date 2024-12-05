@@ -24,13 +24,15 @@ class trajSolver:
         for i in range(self.N):
             start_i = i*6
             start_i1 = (i+1)*6
-            obj += (self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
+            if self.y_m[i,0:self.bearing_dim,self.sat.id].any() != 0:
+                obj += (self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
             # add the dynamics to the objective
             if i < self.N-1: # Don't add the dynamics optimization for the last time step
                 obj += (x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))@(x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))
             for j in range(self.bearing_dim,self.meas_dim):
                 # print(j, y_m[i,j,self.sat.id])
-                obj += (1/self.sat.R_weight)*(self.y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+                if self.y_m[i,self.bearing_dim:self.meas_dim,self.sat.id].any() != 0:
+                    obj += (1/self.sat.R_weight)*(self.y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
         return obj
     
 

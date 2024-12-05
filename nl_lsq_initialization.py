@@ -23,7 +23,7 @@ MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
 def solve_nls(x_traj, nlp, sat_id):
     # Randomize initia; guess
     # TODO: FIx this to make the initial guess noise a function of the error between ground truth and last guess
-    glob_x0 = x_traj[:,:,sat_id] + np.random.normal(loc=0,scale=100_000,size=(N,state_dim))
+    glob_x0 = x_traj[:-1,:,sat_id] + np.random.normal(loc=0,scale=100_000,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
     nlp.add_option('max_iter', 100)
@@ -64,8 +64,8 @@ if __name__ == "__main__":
 
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
-    parser.add_argument('--N', type=int, default=5, help='Number of timesteps')
-    parser.add_argument('--f', type=float, default=0.1, help='Frequency of the simulation')
+    parser.add_argument('--N', type=int, default=2, help='Number of timesteps')
+    parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
     parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
     parser.add_argument('--R_weight', type=float, default=1000, help='Measurement noise weight')
     parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
@@ -133,10 +133,10 @@ if __name__ == "__main__":
         # f_prior = np.zeros((state_dim, state_dim))
         # f_post = np.zeros((state_dim, state_dim))
 
-        x_traj = np.zeros((N, state_dim, n_sats))
+        x_traj = np.zeros((N+1, state_dim, n_sats))
         for sat in sats: 
             x = sat.x_0
-            for i in range(N):
+            for i in range(N+1):
                 x_traj[i,:,sat.id] = x
                 x = rk4_discretization(x, dt)
 
@@ -150,7 +150,7 @@ if __name__ == "__main__":
             sat.x_0 = x_traj[0,:,sat.id]
  
 
-        for i in range(N-1):
+        for i in range(N):
             print("Timestep: ", i)
 
             for sat in sats_copy:
