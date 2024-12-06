@@ -66,7 +66,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
     parser.add_argument('--N', type=int, default=2, help='Number of timesteps')
     parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
-    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
+    parser.add_argument('--n_sats', type=int, default=2, help='Number of satellites')
     parser.add_argument('--R_weight', type=float, default=1000, help='Measurement noise weight')
     parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
     parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
@@ -191,7 +191,7 @@ if __name__ == "__main__":
             x = solve_nls(x_traj, nlp, 0)
             nls_estimates.append(x)
 
-            error = np.linalg.norm(x - x_traj[:,:,0].flatten())
+            error = np.linalg.norm(x - x_traj[:-1,:,0].flatten())
             print(f"Error: {error}")
             
             non_zero_meas = False

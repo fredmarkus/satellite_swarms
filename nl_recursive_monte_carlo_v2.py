@@ -174,7 +174,7 @@ if __name__ == "__main__":
 
             else:
                 eig_val, eig_vec = np.linalg.eig(f_post)
-                # print("Eigenvalues of FIM: ", eig_val)
+                print("Eigenvalues of FIM: ", eig_val)
                 # print("Condition number of FIM: ", np.linalg.cond(f_post))
                 # print("Eigenvectors of FIM: ", eig_vec)
                 

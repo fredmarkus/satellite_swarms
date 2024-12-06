@@ -16,7 +16,7 @@ class trajSolver:
         self.MU = MU
         self.state_dim = state_dim
         self.dt = dt
-        self.cov = self.sat.R_weight*np.eye(self.meas_dim)
+        self.cov = self.sat.R_weight*np.eye(self.bearing_dim)
         self.inv_cov = np.linalg.inv(self.cov)
 
     def objective(self, x):
