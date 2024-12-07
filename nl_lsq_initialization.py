@@ -196,58 +196,6 @@ if __name__ == "__main__":
             
             non_zero_meas = False
 
-            # for sat in sats_copy:
-            #     #Calculate H
-            #     H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
-            #     for j in range(bearing_dim,meas_dim):
-            #         H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
-            #     #Calculate K
-            #     K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
-
-            #     #Calculate h
-            #     h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-            #     for j in range(bearing_dim,meas_dim):
-            #         h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
-
-            #     y_m[i,0:bearing_dim,sat.id] = sat.measure_z_landmark()
-            #     y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats_copy)
-
-            #     sat.x_m = sat.x_p + K@(y_m[i,:,sat.id] - h)
-            #     sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
-
-            #     cov_hist[i,sat.id,:,:] += sat.cov_m
-
-            #     filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
-            #     pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
-
-
-            # Calculate the FIM for satellite 0
-            # A = state_transition(sats_copy[0].x_m)
-            # f_prior = A@f_post@A.T + np.linalg.inv(Q) # with process noise
-            # J[0:bearing_dim,0:state_dim] = sats_copy[0].H_landmark(sats_copy[0].x_m)
-            # for j in range(bearing_dim,meas_dim): ## Consider checks for nan values
-            #     J[j,0:state_dim] = sats_copy[0].H_inter_range(i+1, j, sats_copy[0].x_m)
-            # f_post = f_prior + J.T@R_inv@J
-
-            # # Check if f_post is invertible
-            # if np.linalg.matrix_rank(f_post) != state_dim:
-            #     print(f_post)
-            #     print("FIM is not invertible")
-
-            # else:
-            #     eig_val, eig_vec = np.linalg.eig(f_post)
-            #     # print("Eigenvalues of FIM: ", eig_val)
-            #     # print("Condition number of FIM: ", np.linalg.cond(f_post))
-            #     # print("Eigenvectors of FIM: ", eig_vec)
-                
-            # #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
-            # if i > 0:
-            #     start_i = i * state_dim
-            #     fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post
-
-                # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
-        
-        # sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
 
     # Average FIM
     # fim = np.mean(fim, axis=0)

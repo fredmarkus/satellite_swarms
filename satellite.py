@@ -111,7 +111,7 @@ class satellite:
             if sat.id != self.id:
 
                 if self.is_visible_ellipse(self.curr_pos, sat.curr_pos): # If the earth is not in the way, we can measure the range
-                    # print(f"Satellite {self.id} can see satellite {sat.id}")
+                    print(f"Satellite {self.id} can see satellite {sat.id}")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)

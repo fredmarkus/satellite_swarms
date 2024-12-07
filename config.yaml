@@ -25,7 +25,7 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
-    orbital_elements: {e: 0.0, a: 6928.0, i: 80.0, omega_dot: 270.0, omega: 90.0, M: 0.0} # [e, a, i, Omega, omega, M]
+    orbital_elements: {e: 0.0, a: 6928.0, i: 80.0, omega_dot: 270.0, omega: 10.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
     camera_fov: 60.0
 
