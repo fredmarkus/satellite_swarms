@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+import pykep as pk
 import yaml
 
 from landmark import landmark, latlon2ecef
@@ -22,8 +23,8 @@ MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
 # Function to solve the non-linear least squares problem
 def solve_nls(x_traj, nlp, sat_id):
     # Randomize initia; guess
-    # TODO: FIx this to make the initial guess noise a function of the error between ground truth and last guess
-    glob_x0 = x_traj[:-1,:,sat_id] + np.random.normal(loc=0,scale=100_000,size=(N,state_dim))
+    # TODO: Fix this to make the initial guess noise a function of the error between ground truth and last guess
+    glob_x0 = x_traj[:-1,:,sat_id] + np.random.normal(loc=0,scale=1_000_000,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
     nlp.add_option('max_iter', 100)
@@ -64,7 +65,7 @@ if __name__ == "__main__":
 
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
-    parser.add_argument('--N', type=int, default=2, help='Number of timesteps')
+    parser.add_argument('--N', type=int, default=5, help='Number of timesteps')
     parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
     parser.add_argument('--n_sats', type=int, default=2, help='Number of satellites')
     parser.add_argument('--R_weight', type=float, default=1000, help='Measurement noise weight')
@@ -196,16 +197,35 @@ if __name__ == "__main__":
             
             non_zero_meas = False
 
+            print(x)
+            r1 = x[6:9]
+            r2 = x[12:15]
+            
+            # r1 = x[0:3]
+            # v1 = x[3:6]
+            # r2 = x[6:9]
+            # v2 = x[9:12]
+
+            # # print(f"Satellite 1: {r1}, {v1}")
+            # # print(f"Satellite 2: {r2}, {v2}")
+
+            l = pk.lambert_problem(r1=r1,r2=r2,tof=dt,mu=MU,cw=True)
+            print(l.get_x())
+            print(l.get_v1())
+            print(l.get_v2())
+
+            break   
+    
 
     # Average FIM
     # fim = np.mean(fim, axis=0)
 
     #Get the average covariance matrix for each satellite for each timestep
-    for i in range(N):
-        for sat in sats:
-            cov_hist[i,sat.id,:,:] = cov_hist[i,sat.id,:,:]/num_trials
+    # for i in range(N):
+    #     for sat in sats:
+    #         cov_hist[i,sat.id,:,:] = cov_hist[i,sat.id,:,:]/num_trials
 
-    sat1_cov_hist = cov_hist[:,0,:,:]
+    # sat1_cov_hist = cov_hist[:,0,:,:]
 
     # The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
     # fim_acc = fim[state_dim:,state_dim:]
@@ -221,9 +241,9 @@ if __name__ == "__main__":
     # plot_covariance_crb(crb_diag, state_dim, sat1_cov_hist)
 
     # Plot the trajectory of the satellite
-    plot_trajectory(x_traj, filter_position, N)
+    # plot_trajectory(x_traj, filter_position, N)
 
     # Plot the positional error
-    plot_position_error(pos_error)
+    # plot_position_error(pos_error)
 
-    plt.show()
+    # plt.show()
