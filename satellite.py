@@ -79,13 +79,35 @@ class satellite:
 
     def h_landmark(self, x):
         h = jnp.zeros((len(self.landmarks)*3))
-        if self.camera_exists:
-            for i, landmark in enumerate(self.landmarks):
-                if self.landmark_visible(x[0:3], landmark.pos):
-                    norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
-                    h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
 
-                    #if not true, the landmark is not visible and we do not consider an estimate        
+        landmark_lock = False
+        first_landmark_seen = np.inf
+
+        if self.camera_exists:
+
+            # Visibility calculations
+            height = 550
+            norm_vec_sat = x[0:3]/jnp.linalg.norm(x[0:3])
+            r_earth = x[0:3] - height*norm_vec_sat
+            theta_t = (height/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
+
+            for i, landmark in enumerate(self.landmarks):
+                if not landmark_lock:
+                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
+                        norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
+                        h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
+                        landmark_lock = True
+                        first_landmark_seen = i
+                
+                # We are using the heuristic check that at most the next 8 landmarks can be seen after the first landmark is seen as these could be in the neighborhood of the first seen landmark
+                # The reason we are using 8 is because the landmarks are grouped in sets of 9.
+                elif landmark_lock and i <= first_landmark_seen + 8:
+                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
+                        norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
+                        h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
+                else:
+                    break
+
         return h
 
     def H_landmark(self, x):
@@ -125,14 +147,38 @@ class satellite:
     def measure_z_landmark(self) -> np.ndarray:
         # limit = np.inf # Use limit to check only the next 8 landmarks after one landmark is seen as the rest cannot be visible
         z_l = np.zeros((len(self.landmarks)*3))
+        landmark_lock = False
+        first_landmark_seen = np.inf
+
         if self.camera_exists:
+
+            # Visibility calculations
+            height = 550
+            norm_vec_sat = self.curr_pos/jnp.linalg.norm(self.curr_pos)
+            r_earth = self.curr_pos - height*norm_vec_sat
+            theta_t = (height/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
+
             for i, landmark in enumerate(self.landmarks):
-                if self.landmark_visible(self.curr_pos, landmark.pos):
-                    # limit = i+8
-                    print(f"Satellite {self.id} can see landmark {landmark.name} visible")
-                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-                    vec = self.curr_pos - landmark.pos + noise
-                    z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
+                if not landmark_lock:
+                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
+                        # limit = i+8
+                        print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                        noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
+                        vec = self.curr_pos - landmark.pos + noise
+                        z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
+                        landmark_lock = True
+                        first_landmark_seen = i
+
+                # We are using the heuristic check that at most the next 8 landmarks can be seen after the first landmark is seen as these could be in the neighborhood of the first seen landmark
+                # The reason we are using 8 is because the landmarks are grouped in sets of 9.
+                elif landmark_lock and i <= first_landmark_seen + 8:
+                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
+                        print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                        noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
+                        vec = self.curr_pos - landmark.pos + noise
+                        z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
+                else:
+                    break
 
         return z_l
 
@@ -158,7 +204,7 @@ class satellite:
         
         return True
     
-    def landmark_visible(self, pos, landmark_pos) -> bool:
+    def landmark_visible(self, landmark_pos, r_earth, theta_t) -> bool:
         # Check if a landmark can be seen from the current position of the satellite when taking a picture
         # Assuming that the camera is pointing straight down
         # FOV is about 60 degrees 
@@ -167,14 +213,6 @@ class satellite:
         # First check if the landmark is blocked by earth. 
         # If it is not check if the landmark is within the field of view of the camera
         
-        # TODO: Speed up by doing theta_t calculation just once and passing it to this function so only the theta_l has to be calculated
-        height = 550
-
-        norm_vec_sat = pos/jnp.linalg.norm(pos)
-        
-        # Calculate a vector to the earth's surface
-        r_earth = pos - height*norm_vec_sat
-        theta_t = (height/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
         theta_l = jnp.rad2deg(jnp.arccos(jnp.dot(r_earth,landmark_pos)/(jnp.linalg.norm(r_earth)*jnp.linalg.norm(landmark_pos))))
         
         if theta_l < theta_t:

@@ -27,7 +27,7 @@ def solve_nls(x_traj, nlp, sat_id):
     glob_x0 = x_traj[:-1,:,sat_id] + np.random.normal(loc=0,scale=1_000,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
-    nlp.add_option('max_iter', 100)
+    nlp.add_option('max_iter', 200)
     nlp.add_option('tol', 1e-6)
     nlp.add_option('print_level', 5)
     nlp.add_option('mu_strategy', 'adaptive')
@@ -204,14 +204,6 @@ if __name__ == "__main__":
             r1 = x[6:9]
             r2 = x[12:15]
             
-            # r1 = x[0:3]
-            # v1 = x[3:6]
-            # r2 = x[6:9]
-            # v2 = x[9:12]
-
-            # # print(f"Satellite 1: {r1}, {v1}")
-            # # print(f"Satellite 2: {r2}, {v2}")
-
             l = pk.lambert_problem(r1=r1,r2=r2,tof=dt,mu=MU,cw=True)
             print(l.get_x())
             print(l.get_v1())

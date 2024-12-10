@@ -21,7 +21,7 @@ DENSITY = ROH_0*np.exp(-(HEIGHT-H_0)/SCALE_HEIGHT) # kg/km^3 # Density of the at
 def gravitational_acceleration(r):
     return (-MU / (jnp.linalg.norm(r)**3)) * r
 
-# TODO: Refactor to make this dependent on the satellite object specifically. 
+# TODO: Refactor to make this dependent on the satellite object specifically and account for eccentricity of orbit leading to varying density
 # Reason: We assume that all satellites have the same mass and area values which is not necessarily true
 def atmospheric_drag(v):
     drag = (-0.5*C_D*DENSITY*AREA*v*jnp.linalg.norm(v)**2)/MASS
