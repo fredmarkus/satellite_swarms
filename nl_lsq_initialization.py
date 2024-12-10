@@ -24,7 +24,7 @@ MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
 def solve_nls(x_traj, nlp, sat_id):
     # Randomize initia; guess
     # TODO: Fix this to make the initial guess noise a function of the error between ground truth and last guess
-    glob_x0 = x_traj[:-1,:,sat_id] + np.random.normal(loc=0,scale=1_000_000,size=(N,state_dim))
+    glob_x0 = x_traj[:-1,:,sat_id] + np.random.normal(loc=0,scale=1_000,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
     nlp.add_option('max_iter', 100)
@@ -65,10 +65,10 @@ if __name__ == "__main__":
 
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
-    parser.add_argument('--N', type=int, default=5, help='Number of timesteps')
+    parser.add_argument('--N', type=int, default=10, help='Number of timesteps')
     parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
-    parser.add_argument('--n_sats', type=int, default=2, help='Number of satellites')
-    parser.add_argument('--R_weight', type=float, default=1000, help='Measurement noise weight')
+    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
+    parser.add_argument('--R_weight', type=float, default=10e-4, help='Measurement noise weight')
     parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
     parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
     args = parser.parse_args()
@@ -121,7 +121,6 @@ if __name__ == "__main__":
     R_inv = np.linalg.inv(R)
 
     cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
-    sats_copy = copy.deepcopy(sats)
 
     filter_position = np.zeros((num_trials, N, 3, n_sats))
     pos_error = np.zeros((num_trials, N , 3, n_sats))
@@ -148,18 +147,20 @@ if __name__ == "__main__":
                     sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N+1 3D positions of the other satellites from x_traj
                     sat_i += 1
 
-            sat.x_0 = x_traj[0,:,sat.id]
+            # Sat x_0 needs to be set randomly!!! We are not using the true initial state for the satellite!!!
+            sat.x_0 = x_traj[0,:,sat.id] + np.random.normal(loc=0,scale=1_000_000,size=(state_dim))
+            print(sat.x_0)
  
 
         for i in range(N):
             print("Timestep: ", i)
 
-            for sat in sats_copy:
+            for sat in sats:
                 sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
 
-            for sat in sats_copy:
+            for sat in sats:
                 y_m[i,0:bearing_dim,sat.id] = sat.measure_z_landmark()
-                y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats_copy)
+                y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats)
                 if y_m[i,:,sat.id].any() != 0:
                     # print(f"Satellite {sat.id} at time {i} has measurements {y_m[i,:,sat.id]}")
                     non_zero_meas = True
@@ -170,23 +171,25 @@ if __name__ == "__main__":
             solver = trajSolver(
                 x_traj=x_traj,
                 y_m=y_m,
-                sat=sats_copy[0],
+                sat=sats[0],
                 N=N,
                 meas_dim=meas_dim, 
                 bearing_dim=bearing_dim, 
                 n_sats=n_sats,
                 MU=MU, 
                 state_dim=state_dim,
-                dt=dt)
+                dt=dt,
+                is_initial=True
+                )
             
             nlp = cyipopt.Problem(
                 n = N*state_dim,
-                m = N*state_dim,
+                m = (N-1)*state_dim,
                 problem_obj=solver,
                 lb = jnp.full(N*state_dim, -jnp.inf),
                 ub = jnp.full(N*state_dim, jnp.inf),
-                cl = jnp.zeros(N*state_dim),
-                cu = jnp.zeros(N*state_dim)
+                cl = jnp.zeros((N-1)*state_dim),
+                cu = jnp.zeros((N-1)*state_dim)
             )
 
             x = solve_nls(x_traj, nlp, 0)

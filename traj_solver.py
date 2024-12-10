@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from sat_dynamics import rk4_discretization
 
 class trajSolver:
-    def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim, dt):
+    def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim, dt, is_initial):
         self.x_traj = x_traj
         self.y_m = y_m
         self.sat = sat
@@ -18,6 +18,7 @@ class trajSolver:
         self.dt = dt
         self.cov = self.sat.R_weight*np.eye(self.bearing_dim)
         self.inv_cov = np.linalg.inv(self.cov)
+        self.is_inital = is_initial
 
     def objective(self, x):
         obj = 0
@@ -31,6 +32,7 @@ class trajSolver:
                 obj += (x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))@(x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))
             for j in range(self.bearing_dim,self.meas_dim):
                 # print(j, y_m[i,j,self.sat.id])
+                # WE NEED TO NEGLECT RANGING MEASUREMENTS IF THE SATELLITE DOES NOT HAVE A GOOD LOCK ON ITS OWN POSITION
                 if self.y_m[i,self.bearing_dim:self.meas_dim,self.sat.id].any() != 0:
                     obj += (1/self.sat.R_weight)*(self.y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
         return obj
@@ -42,24 +44,35 @@ class trajSolver:
         return grad
 
     def constraints(self, x):
-        
-        g = jnp.zeros((self.N)*self.state_dim)
-        # Position initial conditions
-        g = g.at[0].set(x[0] - self.sat.x_0[0]) 
-        g = g.at[1].set(x[1] - self.sat.x_0[1])
-        g = g.at[2].set(x[2] - self.sat.x_0[2])
-        # Velocity initial conditions
-        g = g.at[3].set(x[3] - self.sat.x_0[3])
-        g = g.at[4].set(x[4] - self.sat.x_0[4])
-        g = g.at[5].set(x[5] - self.sat.x_0[5])
+        if not self.is_inital:
+            g = jnp.zeros((self.N)*self.state_dim)
+
+            # Position initial conditions
+            g = g.at[0].set(x[0] - self.sat.x_0[0]) 
+            g = g.at[1].set(x[1] - self.sat.x_0[1])
+            g = g.at[2].set(x[2] - self.sat.x_0[2])
+            # Velocity initial conditions
+            g = g.at[3].set(x[3] - self.sat.x_0[3])
+            g = g.at[4].set(x[4] - self.sat.x_0[4])
+            g = g.at[5].set(x[5] - self.sat.x_0[5])
 
 
-        for i in range(self.N-1):
-            x_i = x[i*self.state_dim:(i+1)*self.state_dim]
-            x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
+            for i in range(self.N-1):
+                x_i = x[i*self.state_dim:(i+1)*self.state_dim]
+                x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
+                
+                x_new = rk4_discretization(x_i, self.dt)
+                g = g.at[(i+1)*self.state_dim:(i+2)*self.state_dim].set(x_new - x_ip1)
             
-            x_new = rk4_discretization(x_i, self.dt)
-            g = g.at[(i+1)*self.state_dim:(i+2)*self.state_dim].set(x_new - x_ip1)
+        else:
+            g = jnp.zeros((self.N-1)*self.state_dim)
+
+            for i in range(self.N-1):
+                x_i = x[i*self.state_dim:(i+1)*self.state_dim]
+                x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
+                
+                x_new = rk4_discretization(x_i, self.dt)
+                g = g.at[(i)*self.state_dim:(i+1)*self.state_dim].set(x_new - x_ip1)
 
         return g
 
@@ -75,9 +88,10 @@ class trajSolver:
         row = []
         col = []
 
-        # Initial conditions
-        row.extend([0,1,2,3,4,5])
-        col.extend([0,1,2,3,4,5])
+        # Initial conditions (only added if we are not in the initial case)
+        if not self.is_inital:
+            row.extend([0,1,2,3,4,5])
+            col.extend([0,1,2,3,4,5])
 
         # Define offsets for the row and col calculations
         offsets = [
@@ -90,11 +104,17 @@ class trajSolver:
         ]
 
         # Loop over the range and apply the offsets
-        for i in range(0, self.N-1):
-            for row_offset, col_offset in offsets:
-                row.append((i+1) * dim + row_offset)
-                col.append(i * dim + col_offset)
+        if not self.is_inital:
+            for i in range(0, self.N-1):
+                for row_offset, col_offset in offsets:
+                    row.append((i+1) * dim + row_offset)
+                    col.append(i * dim + col_offset)
     
+        else:
+            for i in range(0, self.N-1):
+                for row_offset, col_offset in offsets:
+                    row.append(i * dim + row_offset)
+                    col.append(i * dim + col_offset)
         # Visualization of the Jacobian mask. Check it matches the actual Jacobian. Using '11' rather than '1' for easier intepretation
         # jac = np.zeros((self.N*6,self.N*6))
         # for i in range(len(row)):

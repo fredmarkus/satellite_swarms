@@ -214,7 +214,8 @@ for trial in range(num_trials):
         n_sats=n_sats, 
         MU=MU, 
         state_dim=state_dim,
-        dt=dt
+        dt=dt,
+        is_initial=False
         )
     
     nlp = cyipopt.Problem(
