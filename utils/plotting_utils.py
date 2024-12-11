@@ -7,9 +7,10 @@ import numpy as np
 def plot_covariance_crb(crb_diag, state_dim, sat_cov_hist):
     # Plot the covariance matrix and the FIM diagonal entries.
     plt.figure()
-    plt.plot(crb_diag[0::state_dim], label='x position CRB', color='red')
-    plt.plot(crb_diag[1::state_dim], label='y position CRB', color='blue')
-    plt.plot(crb_diag[2::state_dim], label='z position CRB', color='green')
+    # Ignore the first timestep to improve visualization
+    plt.plot(crb_diag[6::state_dim], label='x position CRB', color='red')
+    plt.plot(crb_diag[7::state_dim], label='y position CRB', color='blue')
+    plt.plot(crb_diag[8::state_dim], label='z position CRB', color='green')
     # plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
     # plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
     # plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')

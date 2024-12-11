@@ -28,7 +28,8 @@ class satellite:
                  landmarks: object,
                  orbital_elements: dict,
                  camera_exists: bool,
-                 camera_fov: float) -> None:
+                 camera_fov: float,
+                 verbose: bool) -> None:
         
         # Calculate initial state based on orbital elements placing 
         a = float(orbital_elements["a"])
@@ -61,7 +62,8 @@ class satellite:
         self.landmarks = landmarks
         self.camera_exists = camera_exists
         self.camera_fov = camera_fov
-        self.bearing_dim = bearing_dim  
+        self.bearing_dim = bearing_dim
+        self.verbose = verbose
         
         # Initialize the measurement vector with noise
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
@@ -133,7 +135,8 @@ class satellite:
             if sat.id != self.id:
 
                 if self.is_visible_ellipse(self.curr_pos, sat.curr_pos): # If the earth is not in the way, we can measure the range
-                    print(f"Satellite {self.id} can see satellite {sat.id}")
+                    if self.verbose:
+                        print(f"Satellite {self.id} can see satellite {sat.id}")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
@@ -161,8 +164,8 @@ class satellite:
             for i, landmark in enumerate(self.landmarks):
                 if not landmark_lock:
                     if self.landmark_visible(landmark.pos, r_earth, theta_t):
-                        # limit = i+8
-                        print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                        if self.verbose:
+                            print(f"Satellite {self.id} can see landmark {landmark.name} visible")
                         noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
                         vec = self.curr_pos - landmark.pos + noise
                         z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
@@ -173,7 +176,8 @@ class satellite:
                 # The reason we are using 8 is because the landmarks are grouped in sets of 9.
                 elif landmark_lock and i <= first_landmark_seen + 8:
                     if self.landmark_visible(landmark.pos, r_earth, theta_t):
-                        print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                        if self.verbose:
+                            print(f"Satellite {self.id} can see landmark {landmark.name} visible")
                         noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
                         vec = self.curr_pos - landmark.pos + noise
                         z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)

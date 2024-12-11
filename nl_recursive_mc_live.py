@@ -25,9 +25,9 @@ from landmark import latlon2ecef
 N = 250
 f = 1 #Hz
 dt = 1/f
-n_sats = 1
+n_sats = 2
 R_weight = 10e-4
-bearing_dim = 3
+bearing_dim = 3*N
 state_dim = 6
 meas_dim = n_sats-1 + bearing_dim
 R = np.eye(meas_dim)*R_weight

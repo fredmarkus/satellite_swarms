@@ -14,6 +14,7 @@ satellites:
     orbital_elements: {e: 0.0, a: 6928.0, i: 90.0, omega_dot: 180.0, omega: 0.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
     camera_fov: 60.0
+    verbose: False
 
   - robot_id: 1
     pos_cov_init: 1
@@ -25,23 +26,25 @@ satellites:
     N: N
     n_sats: 2
     landmarks: landmark_objects
-    orbital_elements: {e: 0.0, a: 6928.0, i: 80.0, omega_dot: 270.0, omega: 10.0, M: 0.0} # [e, a, i, Omega, omega, M]
+    orbital_elements: {e: 0.0, a: 6928.0, i: 70.0, omega_dot: 200.0, omega: 30.0, M: 10.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
     camera_fov: 60.0
+    verbose: False
 
-  
-  # - robot_id: 2
-  #   pos_cov_init: 1
-  #   vel_cov_init: 0.1
-  #   dim: 6
-  #   meas_dim: 4
-  #   R_weight: 10e-5
-  #   N: N
-  #   n_sats: 2
-  #   landmarks: landmark_objects
-  #   orbital_elements: {e: 0.1, a: 7478.0, i: 85.0, omega_dot: 270.0, omega: 30.0, M: 0.0} # [e, a, i, Omega, omega, M]
-  #   camera_exists: True
-  #   camera_fov: 60.0
+  - robot_id: 2
+    pos_cov_init: 1
+    vel_cov_init: 0.1
+    dim: 6
+    meas_dim: 4
+    R_weight: 10e-5
+    N: N
+    n_sats: 2
+    landmarks: landmark_objects
+    orbital_elements: {e: 0.1, a: 7478.0, i: 85.0, omega_dot: 270.0, omega: 30.0, M: 0.0} # [e, a, i, Omega, omega, M]
+    camera_exists: True
+    camera_fov: 60.0
+    verbose: False
+
 
 
   # - robot_id: 3
@@ -56,3 +59,5 @@ satellites:
   #   orbital_elements: {e: 0.2, a: 7478.0, i: 105.0, omega_dot: 30.0, omega: 20.0, M: 10.0} # [e, a, i, Omega, omega, M]
   #   camera_exists: True
   #   camera_fov: 60.0
+  #   verbose: False
+

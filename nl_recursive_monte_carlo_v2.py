@@ -37,9 +37,10 @@ if __name__ == "__main__":
     parser.add_argument('--N', type=int, default=100, help='Number of timesteps')
     parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
     parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
-    parser.add_argument('--R_weight', type=float, default=10e-4, help='Measurement noise weight')
+    parser.add_argument('--R_weight', type=float, default=10e-5, help='Measurement noise weight')
     parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
     parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
+    parser.add_argument('--verbose', type=bool, default=False, help='Print information')
     args = parser.parse_args()
 
     N = args.N
@@ -47,6 +48,7 @@ if __name__ == "__main__":
     n_sats = args.n_sats
     R_weight = args.R_weight
     state_dim = args.state_dim
+    verbose = args.verbose
 
     bearing_dim = len(landmark_objects)*3
     dt = 1/f
@@ -77,6 +79,7 @@ if __name__ == "__main__":
         sat_config["n_sats"] = n_sats
         sat_config["R_weight"] = R_weight
         sat_config["bearing_dim"] = bearing_dim
+        sat_config["verbose"] = verbose
 
         satellite_inst = satellite(**sat_config)
         sats.append(satellite_inst)
@@ -134,12 +137,13 @@ if __name__ == "__main__":
                 sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
 
                 # FIM Calculations
-                inv_A = np.linalg.inv(A)
-                M = inv_A.T@f_post[:,:,sat.id]@inv_A
-                C = M@np.linalg.inv(M+np.linalg.inv(Q))
-                L = np.eye(state_dim) - C
-                f_prior[:,:,sat.id] = L@M + C@np.linalg.inv(Q)@C.T
-                # print(f_prior)
+                # inv_A = np.linalg.inv(A)
+                D11 = A.T@f_post[:,:,sat.id]@A
+                D12 = -A.T@np.linalg.inv(Q)
+                if np.linalg.matrix_rank(f_post[:,:,sat.id] + D11) != state_dim:
+                    f_prior[:,:,sat.id] = D12.T@np.linalg.pinv(f_post[:,:,sat.id] + D11)@D12
+                else:
+                    f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
 
             for sat in sats_copy:
                 #Calculate H
@@ -148,7 +152,7 @@ if __name__ == "__main__":
                     H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
 
                 # FIM Calculation
-                f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@R_inv@H
+                f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@R_inv@H + np.linalg.inv(Q)
 
                 #Calculate K
                 K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
@@ -169,6 +173,10 @@ if __name__ == "__main__":
                 filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
                 pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
 
+                # Sanity check that Cov - FIM is positive definite (Should always be true)
+                if np.linalg.matrix_rank(f_post[:,:,sat.id]) == state_dim:
+                    if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post[:,:,sat.id])) > 0):
+                        print(f"Satellite {sat.id} FIM is NOT positive definite. Something is went wrong!!!")
 
                 # Check if f_post is invertible
                 if np.linalg.matrix_rank(f_post[:,:,sat.id]) != state_dim:
