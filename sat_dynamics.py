@@ -2,6 +2,8 @@ import jax.numpy as jnp
 import jax
 import numpy as np
 
+from utils.math_utils import quaternion_mul
+
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
 HEIGHT = 550 # km # Height of the satellite
@@ -100,3 +102,22 @@ def state_transition(x):
     
     A = np.block([[np.zeros((3,3)), I], [grav_jac+j2_jac, drag_jac]])
     return A
+
+def attitude_state_propagation(q, beta, omega, dt):
+    """
+    State propagation function for the satellite
+    args:
+        q: Quaternion attitude vector
+        beta: Gyro bias
+        omega: Angular velocity
+        dt: Time step
+    returns:
+        qu: New Quaternion
+        bu: New Gyro bias
+        Pu: New Covariance matrix
+    """
+    theta = np.linalg.norm(omega - beta) * dt
+    if np.linalg.norm(omega - beta) == 0:
+        return q
+    r = (omega - beta)/np.linalg.norm(omega - beta)
+    return quaternion_mul(q, np.concatenate(([np.cos(theta/2)], np.sin(theta/2)*r)))

@@ -78,6 +78,25 @@ class satellite:
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
         # self.sats_visible = np.zeros((N,n_sats-1)) # Determines whether the other satellites are visible to this satellite
 
+        #Attitude variables
+        #Quaternion initialization 
+        # TODO: Fix this using actual bearing initialization
+        q0 = [ 0.030, 0.502, 0.476, 0.780]
+        self.q_m = q0/np.linalg.norm(q0) # Normalize
+        self.q_p = self.q_m
+        
+        # Angular velocity initialization
+        w0 = [0.3, 0.1, -0.2]
+        self.w = w0/np.linalg.norm(w0) * np.deg2rad(50)
+
+        # Gyro bias
+        self.beta_m = 0.01
+        self.beta_p = self.beta_m
+
+        self.att_cov_m = np.eye(6)
+        self.att_cov_p = self.att_cov_m
+
+
 
     def h_landmark(self, x):
         h = jnp.zeros((len(self.landmarks)*3))
