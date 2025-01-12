@@ -160,7 +160,7 @@ if __name__ == "__main__":
 
             for sat in sats:
                 y_m[i,0:bearing_dim,sat.id] = sat.measure_z_landmark()
-                y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats)
+                y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats) # TODO: These should not be taken
                 if y_m[i,:,sat.id].any() != 0:
                     # print(f"Satellite {sat.id} at time {i} has measurements {y_m[i,:,sat.id]}")
                     non_zero_meas = True
@@ -171,7 +171,7 @@ if __name__ == "__main__":
             solver = trajSolver(
                 x_traj=x_traj,
                 y_m=y_m,
-                sat=sats[0],
+                sat=sats[0], # TODO: This is only for one satellite. Initialize for all satellites if necessary
                 N=N,
                 meas_dim=meas_dim, 
                 bearing_dim=bearing_dim, 

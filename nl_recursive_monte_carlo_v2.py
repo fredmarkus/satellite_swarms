@@ -109,7 +109,6 @@ if __name__ == "__main__":
     fim = np.zeros((num_trials,N*state_dim, N*state_dim))
 
     J = np.zeros((meas_dim, state_dim))
-    R_inv = np.linalg.inv(R)
 
     cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
     sats_copy = copy.deepcopy(sats)
@@ -138,12 +137,10 @@ if __name__ == "__main__":
 
                 # FIM Calculations
                 # inv_A = np.linalg.inv(A)
-                D11 = A.T@f_post[:,:,sat.id]@A
+                D11 = A.T@np.linalg.inv(Q)@A
                 D12 = -A.T@np.linalg.inv(Q)
-                if np.linalg.matrix_rank(f_post[:,:,sat.id] + D11) != state_dim:
-                    f_prior[:,:,sat.id] = D12.T@np.linalg.pinv(f_post[:,:,sat.id] + D11)@D12
-                else:
-                    f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
+                
+                f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
 
             for sat in sats_copy:
                 #Calculate H
@@ -152,10 +149,10 @@ if __name__ == "__main__":
                     H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
 
                 # FIM Calculation
-                f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@R_inv@H + np.linalg.inv(Q)
+                f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@np.linalg.inv(R)@H + np.linalg.inv(Q)
 
                 #Calculate K
-                K = sat.cov_p@H.T@np.linalg.pinv(H@sat.cov_p@H.T + R)
+                K = sat.cov_p@H.T@np.linalg.inv(H@sat.cov_p@H.T + R)
 
                 #Calculate h
                 h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
@@ -176,7 +173,7 @@ if __name__ == "__main__":
                 # Sanity check that Cov - FIM is positive definite (Should always be true)
                 if np.linalg.matrix_rank(f_post[:,:,sat.id]) == state_dim:
                     if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post[:,:,sat.id])) > 0):
-                        print(f"Satellite {sat.id} FIM is NOT positive definite. Something is went wrong!!!")
+                        print(f"Satellite {sat.id} FIM is NOT positive definite. Something went wrong!!!")
 
                 # Check if f_post is invertible
                 if np.linalg.matrix_rank(f_post[:,:,sat.id]) != state_dim:
