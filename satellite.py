@@ -97,8 +97,6 @@ class satellite:
 
         if self.camera_exists:
             for i, landmark in enumerate(self.curr_visible_landmarks):
-                # if not landmark_lock:
-                    # if self.landmark_visible(landmark.pos, r_earth, theta_t):
                 norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
                 h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
         return h
@@ -142,7 +140,6 @@ class satellite:
     
 
     def measure_z_landmark(self) -> np.ndarray:
-        # limit = np.inf # Use limit to check only the next 8 landmarks after one landmark is seen as the rest cannot be visible
         z_l = np.zeros((len(self.curr_visible_landmarks)*3))
 
         if self.camera_exists:
