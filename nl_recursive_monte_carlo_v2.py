@@ -53,7 +53,7 @@ if __name__ == "__main__":
     bearing_dim = len(landmark_objects)*3
     dt = 1/f
     meas_dim = n_sats-1 + bearing_dim   
-    R = np.eye(meas_dim)*R_weight
+
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
     # page 6
     Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
@@ -75,7 +75,6 @@ if __name__ == "__main__":
         # Overwrite the following yaml file parameters with values provided in this script
         sat_config["N"] = N
         sat_config["landmarks"] = landmark_objects
-        sat_config["meas_dim"] = meas_dim
         sat_config["n_sats"] = n_sats
         sat_config["R_weight"] = R_weight
         sat_config["bearing_dim"] = bearing_dim
@@ -120,9 +119,9 @@ if __name__ == "__main__":
     for trial in range(num_trials):
         print("Monte Carlo Trial: ", trial)
 
-        y_m = np.zeros((N,meas_dim,n_sats))
-        H = np.zeros((meas_dim,state_dim))
-        h = np.zeros((meas_dim))
+        # y_m = np.zeros((N,meas_dim,n_sats))
+        # H = np.zeros((meas_dim,state_dim))
+        # h = np.zeros((meas_dim))
         f_prior = np.zeros((state_dim, state_dim, n_sats))
         f_post = np.zeros((state_dim, state_dim, n_sats))
 
@@ -143,6 +142,21 @@ if __name__ == "__main__":
                 f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
 
             for sat in sats_copy:
+
+                #Get visible landmarks
+                visible_landmarks = sat.visible_landmarks_list(sat.x_p)
+                bearing_dim = len(visible_landmarks)*3
+                meas_dim = n_sats-1 + bearing_dim
+
+                # Re-initialize the measurement matrices for each satellite with the correct dimensions
+                # based on the number of visible landmarks
+                y_m = np.zeros((meas_dim))
+                H = np.zeros((meas_dim,state_dim))
+                h = np.zeros((meas_dim))
+
+                # Re-initialize the measurement noise covariance matrix with correct dimensions
+                R = np.eye(meas_dim)*R_weight
+
                 #Calculate H
                 H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
                 for j in range(bearing_dim,meas_dim):
@@ -159,10 +173,10 @@ if __name__ == "__main__":
                 for j in range(bearing_dim,meas_dim):
                     h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
 
-                y_m[i,0:bearing_dim,sat.id] = sat.measure_z_landmark()
-                y_m[i,bearing_dim:meas_dim,sat.id] = sat.measure_z_range(sats_copy)
+                y_m[0:bearing_dim] = sat.measure_z_landmark()
+                y_m[bearing_dim:meas_dim] = sat.measure_z_range(sats_copy)
 
-                sat.x_m = sat.x_p + K@(y_m[i,:,sat.id] - h)
+                sat.x_m = sat.x_p + K@(y_m - h)
                 sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
 
                 cov_hist[i,sat.id,:,:] += sat.cov_m
@@ -177,12 +191,14 @@ if __name__ == "__main__":
 
                 # Check if f_post is invertible
                 if np.linalg.matrix_rank(f_post[:,:,sat.id]) != state_dim:
-                    print(f_post[:,:,sat.id])
-                    print(f"Satellite {sat.id} FIM is not invertible")
+                    if verbose:
+                        print(f_post[:,:,sat.id])
+                        print(f"Satellite {sat.id} FIM is not invertible")
 
                 else:
                     eig_val, eig_vec = np.linalg.eig(f_post[:,:,sat.id])
-                    print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
+                    if verbose:
+                        print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
                     # print("Condition number of FIM: ", np.linalg.cond(f_post))
                     # print("Eigenvectors of FIM: ", eig_vec)
                 
