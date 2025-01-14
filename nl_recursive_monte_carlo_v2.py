@@ -117,9 +117,6 @@ if __name__ == "__main__":
     for trial in range(num_trials):
         print("Monte Carlo Trial: ", trial)
 
-        # y_m = np.zeros((N,meas_dim,n_sats))
-        # H = np.zeros((meas_dim,state_dim))
-        # h = np.zeros((meas_dim))
         f_prior = np.zeros((state_dim, state_dim, n_sats))
         f_post = np.zeros((state_dim, state_dim, n_sats))
 
@@ -204,8 +201,6 @@ if __name__ == "__main__":
             if i > 0:
                 start_i = i * state_dim
                 fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post[:,:,0]
-
-                # print(f"Satellite {sat.id} at time {i} has covariance {sat.cov_m}")
         
         sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
 
