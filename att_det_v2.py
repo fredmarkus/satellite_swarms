@@ -145,10 +145,11 @@ if __name__ == "__main__":
                 sat.att_cov_p = A@sat.att_cov_m@A.T + Q_att
 
             for sat in sats_copy:
+                # TODO: Fix this using correct quaternion initialization and propagation
                 br_landmark = sat.measure_z_landmark()
                 # inertial2body = quaternion_to_rotation_matrix(sat.q_p).T
                 # inertial_measurement = -sat.x_p[0:3]/ np.linalg.norm(sat.x_p[0:3])
-                Z = br_landmark# - inertial2body@inertial_measurement #TODO: Better understand what is needed for the frame transformation
+                Z = br_landmark# - inertial2body@inertial_measurement 
                 C = np.block([[hat_stack(br_landmark), np.zeros((bearing_dim, 3))]])
                 S = C@sat.att_cov_p@C.T + R_att
 
