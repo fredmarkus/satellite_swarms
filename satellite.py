@@ -21,7 +21,6 @@ class satellite:
                  robot_id: int, 
                  dim: int, 
                  bearing_dim: int,
-                 meas_dim: int, 
                  R_weight: float, 
                  N: int, 
                  n_sats: int, 
@@ -55,7 +54,6 @@ class satellite:
         self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
-        self.meas_dim = meas_dim
         self.R_weight = R_weight # This is the variance weight for the measurement noise
         self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
@@ -76,40 +74,31 @@ class satellite:
 
         self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
-        # self.sats_visible = np.zeros((N,n_sats-1)) # Determines whether the other satellites are visible to this satellite
+
+        self.curr_visible_landmarks = []
+        self.HEIGHT = 550
+
+    def visible_landmarks_list(self, x) -> int:
+        norm_vec_sat = x[0:3]/jnp.linalg.norm(x[0:3])
+        r_earth = x[0:3] - self.HEIGHT*norm_vec_sat
+        theta_t = (self.HEIGHT/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
+
+        self.curr_visible_landmarks = []
+
+        for landmark in self.landmarks:
+            if self.landmark_visible(landmark.pos, r_earth, theta_t):
+                self.curr_visible_landmarks.append(landmark)
+
+        return self.curr_visible_landmarks
 
 
     def h_landmark(self, x):
-        h = jnp.zeros((len(self.landmarks)*3))
-
-        landmark_lock = False
-        first_landmark_seen = np.inf
+        h = jnp.zeros((len(self.curr_visible_landmarks)*3))
 
         if self.camera_exists:
-
-            # Visibility calculations
-            height = 550
-            norm_vec_sat = x[0:3]/jnp.linalg.norm(x[0:3])
-            r_earth = x[0:3] - height*norm_vec_sat
-            theta_t = (height/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
-
-            for i, landmark in enumerate(self.landmarks):
-                if not landmark_lock:
-                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
-                        norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
-                        h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
-                        landmark_lock = True
-                        first_landmark_seen = i
-                
-                # We are using the heuristic check that at most the next 8 landmarks can be seen after the first landmark is seen as these could be in the neighborhood of the first seen landmark
-                # The reason we are using 8 is because the landmarks are grouped in sets of 9.
-                elif landmark_lock and i <= first_landmark_seen + 8:
-                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
-                        norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
-                        h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
-                else:
-                    break
-
+            for i, landmark in enumerate(self.curr_visible_landmarks):
+                norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
+                h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
         return h
 
     def H_landmark(self, x):
@@ -117,17 +106,20 @@ class satellite:
         jac = jax.jacobian(self.h_landmark)(x)
         return jac
 
-    def h_inter_range(self, i, j, x): # This function calculates the range measurement between the satellite and another satellite
+
+    def h_inter_range(self, timestep, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
-        sat_pos = self.other_sats_pos[i,:,sat_id]
+        sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
         if self.is_visible_ellipse(x[0:3], sat_pos):
             return jnp.linalg.norm(x[0:3] - sat_pos) 
         else:
             return jnp.linalg.norm(0)
 
+
     def H_inter_range(self, i, j, x):
         jac = jax.jacobian(self.h_inter_range, argnums=2)(i, j, x)
         return jac
+
 
     def measure_z_range(self, sats: list) -> np.ndarray:
         z = np.empty((0))
@@ -140,51 +132,27 @@ class satellite:
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
-                    # self.sats_visible[index,sat.id] = 1
 
                 else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
                    
                     z = np.append(z,np.array([0]),axis=0)
         return z
     
+
     def measure_z_landmark(self) -> np.ndarray:
-        # limit = np.inf # Use limit to check only the next 8 landmarks after one landmark is seen as the rest cannot be visible
-        z_l = np.zeros((len(self.landmarks)*3))
-        landmark_lock = False
-        first_landmark_seen = np.inf
+        z_l = np.zeros((len(self.curr_visible_landmarks)*3))
 
         if self.camera_exists:
 
-            # Visibility calculations
-            height = 550
-            norm_vec_sat = self.curr_pos/jnp.linalg.norm(self.curr_pos)
-            r_earth = self.curr_pos - height*norm_vec_sat
-            theta_t = (height/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
-
-            for i, landmark in enumerate(self.landmarks):
-                if not landmark_lock:
-                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
-                        if self.verbose:
-                            print(f"Satellite {self.id} can see landmark {landmark.name} visible")
-                        noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-                        vec = self.curr_pos - landmark.pos + noise
-                        z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
-                        landmark_lock = True
-                        first_landmark_seen = i
-
-                # We are using the heuristic check that at most the next 8 landmarks can be seen after the first landmark is seen as these could be in the neighborhood of the first seen landmark
-                # The reason we are using 8 is because the landmarks are grouped in sets of 9.
-                elif landmark_lock and i <= first_landmark_seen + 8:
-                    if self.landmark_visible(landmark.pos, r_earth, theta_t):
-                        if self.verbose:
-                            print(f"Satellite {self.id} can see landmark {landmark.name} visible")
-                        noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
-                        vec = self.curr_pos - landmark.pos + noise
-                        z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
-                else:
-                    break
+            for i, landmark in enumerate(self.curr_visible_landmarks):
+                if self.verbose:
+                    print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
+                vec = self.curr_pos - landmark.pos + noise
+                z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
 
         return z_l
+
 
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
         # Check if the earth is in the way of the own position and the other position
@@ -208,6 +176,7 @@ class satellite:
         
         return True
     
+
     def landmark_visible(self, landmark_pos, r_earth, theta_t) -> bool:
         # Check if a landmark can be seen from the current position of the satellite when taking a picture
         # Assuming that the camera is pointing straight down
