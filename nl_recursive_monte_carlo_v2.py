@@ -107,8 +107,6 @@ if __name__ == "__main__":
     ## Calculate FIM directly in recursive fashion.
     fim = np.zeros((num_trials,N*state_dim, N*state_dim))
 
-    J = np.zeros((meas_dim, state_dim))
-
     cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
     sats_copy = copy.deepcopy(sats)
 
@@ -145,8 +143,8 @@ if __name__ == "__main__":
 
                 #Get visible landmarks
                 visible_landmarks = sat.visible_landmarks_list(sat.x_p)
-                bearing_dim = len(visible_landmarks)*3
-                meas_dim = n_sats-1 + bearing_dim
+                sat.bearing_dim = len(visible_landmarks)*3
+                meas_dim = n_sats-1 + sat.bearing_dim
 
                 # Re-initialize the measurement matrices for each satellite with the correct dimensions
                 # based on the number of visible landmarks
@@ -158,8 +156,8 @@ if __name__ == "__main__":
                 R = np.eye(meas_dim)*R_weight
 
                 #Calculate H
-                H[0:bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
-                for j in range(bearing_dim,meas_dim):
+                H[0:sat.bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
+                for j in range(sat.bearing_dim,meas_dim):
                     H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
 
                 # FIM Calculation
@@ -169,12 +167,12 @@ if __name__ == "__main__":
                 K = sat.cov_p@H.T@np.linalg.inv(H@sat.cov_p@H.T + R)
 
                 #Calculate h
-                h[0:bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-                for j in range(bearing_dim,meas_dim):
+                h[0:sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
+                for j in range(sat.bearing_dim,meas_dim):
                     h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
 
-                y_m[0:bearing_dim] = sat.measure_z_landmark()
-                y_m[bearing_dim:meas_dim] = sat.measure_z_range(sats_copy)
+                y_m[0:sat.bearing_dim] = sat.measure_z_landmark()
+                y_m[sat.bearing_dim:meas_dim] = sat.measure_z_range(sats_copy)
 
                 sat.x_m = sat.x_p + K@(y_m - h)
                 sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
