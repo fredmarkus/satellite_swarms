@@ -16,8 +16,8 @@ from collections import deque
 
 from utils.math_utils import R_X, R_Z
 from landmark import landmark
-from satellite import satellite
-from sat_dynamics import rk4_discretization, state_transition
+from sat.sat_core import satellite
+from sat.sat_dynamics import rk4_discretization, state_transition
 from landmark import latlon2ecef
 
 

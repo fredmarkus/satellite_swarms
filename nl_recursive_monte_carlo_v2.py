@@ -1,16 +1,13 @@
 import argparse
 import copy
 import csv
-import jax
-import jax.numpy as jnp
-import math
 import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
 from landmark import landmark, latlon2ecef
-from satellite import satellite
-from sat_dynamics import rk4_discretization, state_transition
+from sat.sat_core import satellite
+from sat.sat_dynamics import rk4_discretization, state_transition
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 
 if __name__ == "__main__":
@@ -44,22 +41,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     N = args.N
-    f = args.f #Hz
+    dt = 1/args.f #Hz
     n_sats = args.n_sats
     R_weight = args.R_weight
     state_dim = args.state_dim
     verbose = args.verbose
+    
+    #MC Parameters
+    num_trials = args.num_trials
 
     bearing_dim = len(landmark_objects)*3
-    dt = 1/f
     meas_dim = n_sats-1 + bearing_dim   
 
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
     # page 6
     Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
 
-    #MC Parameters
-    num_trials = args.num_trials
 
     # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
     # np.random.seed(42)        #Set seed for reproducibility

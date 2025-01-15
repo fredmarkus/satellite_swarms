@@ -12,8 +12,8 @@ import pykep as pk
 import yaml
 
 from landmark import landmark, latlon2ecef
-from satellite import satellite
-from sat_dynamics import rk4_discretization
+from sat.sat_core import satellite
+from sat.sat_dynamics import rk4_discretization
 from traj_solver import trajSolver
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 
