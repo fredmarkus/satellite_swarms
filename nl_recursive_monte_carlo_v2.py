@@ -67,18 +67,23 @@ if __name__ == "__main__":
 
     sats = []
 
-    for sat_config in config["satellites"]:
-
+    for i, sat_config in enumerate(config["satellites"]):
+    
+        # Only create the number of satellites specified in the argument. The rest of the yaml file is ignored
+        if i < n_sats:
         # Overwrite the following yaml file parameters with values provided in this script
-        sat_config["N"] = N
-        sat_config["landmarks"] = landmark_objects
-        sat_config["n_sats"] = n_sats
-        sat_config["R_weight"] = R_weight
-        sat_config["bearing_dim"] = bearing_dim
-        sat_config["verbose"] = verbose
+            sat_config["N"] = N
+            sat_config["landmarks"] = landmark_objects
+            sat_config["n_sats"] = n_sats
+            sat_config["R_weight"] = R_weight
+            sat_config["bearing_dim"] = bearing_dim
+            sat_config["verbose"] = verbose
 
-        satellite_inst = satellite(**sat_config)
-        sats.append(satellite_inst)
+            satellite_inst = satellite(**sat_config)
+            sats.append(satellite_inst)
+            
+        else:
+            break
 
 
     # Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps;
@@ -127,7 +132,6 @@ if __name__ == "__main__":
                 sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
 
                 # FIM Calculations
-                # inv_A = np.linalg.inv(A)
                 D11 = A.T@np.linalg.inv(Q)@A
                 D12 = -A.T@np.linalg.inv(Q)
                 

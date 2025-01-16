@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def plot_covariance_crb(crb_diag, state_dim, sat_cov_hist):
+def plot_covariance_crb(crb_diag, state_dim, cov_hist):
     # Plot the covariance matrix and the FIM diagonal entries.
     plt.figure()
     # Ignore the first timestep to improve visualization
@@ -14,9 +14,9 @@ def plot_covariance_crb(crb_diag, state_dim, sat_cov_hist):
     # plt.plot(crb_diag[3::state_dim], label='x velocity CRB', color='red')
     # plt.plot(crb_diag[4::state_dim], label='y velocity CRB', color='blue')
     # plt.plot(crb_diag[5::state_dim], label='z velocity CRB', color='green')
-    plt.plot(sat_cov_hist[1:,0,0], label='x position Covariance', color='red', linestyle='--')
-    plt.plot(sat_cov_hist[1:,1,1], label='y position Covariance', color='blue', linestyle='--')
-    plt.plot(sat_cov_hist[1:,2,2], label='z position Covariance', color='green', linestyle='--')
+    plt.plot(cov_hist[1:,0,0], label='x position Covariance', color='red', linestyle='--')
+    plt.plot(cov_hist[1:,1,1], label='y position Covariance', color='blue', linestyle='--')
+    plt.plot(cov_hist[1:,2,2], label='z position Covariance', color='green', linestyle='--')
     # plt.plot(sat1_cov_hist[:,3,3], label='x velocity Covariance', color='red', linestyle='--')
     # plt.plot(sat1_cov_hist[:,4,4], label='y velocity Covariance', color='blue', linestyle='--')
     # plt.plot(sat1_cov_hist[:,5,5], label='z velocity Covariance', color='green', linestyle='--')
@@ -79,4 +79,12 @@ def plot_position_error(pos_error):
     plt.title('Absolute Position Error for Satellite 1 ')
     plt.xlabel('Timestep')
     plt.legend()
-plot_covariance_crb
+
+
+def plot_covariance_crb_trace(crb_trace, cov_trace):
+    plt.figure()
+    plt.plot(crb_trace[1:], label='CRB Trace', color='red')
+    plt.plot(cov_trace[1:], label='COV Trace', color='blue')
+    plt.title('Covariance Matrix and CRB ')
+    plt.xlabel('Timestep')
+    plt.legend()

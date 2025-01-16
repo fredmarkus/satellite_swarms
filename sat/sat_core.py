@@ -55,7 +55,6 @@ class satellite:
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
         self.R_weight = R_weight # This is the variance weight for the measurement noise
-        self.N = N # Number of time steps
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
         self.camera_exists = camera_exists
@@ -110,6 +109,7 @@ class satellite:
     def h_inter_range(self, timestep, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
+        #TODO: Provide fix here using an argument flag to say whether we can ignore the earth or not.
         if self.is_visible_ellipse(x[0:3], sat_pos):
             return jnp.linalg.norm(x[0:3] - sat_pos) 
         else:
@@ -125,7 +125,7 @@ class satellite:
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
-
+                #TODO: Provide fix here using an argument flag to say whether we can ignore the earth or not.
                 if self.is_visible_ellipse(self.curr_pos, sat.curr_pos): # If the earth is not in the way, we can measure the range
                     if self.verbose:
                         print(f"Satellite {self.id} can see satellite {sat.id}")
