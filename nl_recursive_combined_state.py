@@ -3,6 +3,7 @@ import copy
 import csv
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.linalg import block_diag
 import yaml
 
 from landmark import landmark, latlon2ecef
@@ -110,6 +111,10 @@ if __name__ == "__main__":
     filter_position = np.zeros((num_trials, N, 3, n_sats))
     pos_error = np.zeros((num_trials, N , 3, n_sats))
 
+    Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
+    Q_block = block_diag(*[Q for _ in range(n_sats)])
+    ind_cov = np.diag(np.array([1,1,1,0.1,0.1,0.1])) # Individual covariance matrix for each satellite
+
 
     for trial in range(num_trials):
         print("Monte Carlo Trial: ", trial)
@@ -117,22 +122,49 @@ if __name__ == "__main__":
         f_prior = np.zeros((state_dim, state_dim, n_sats))
         f_post = np.zeros((state_dim, state_dim, n_sats))
 
+        # Initialize the combined state vector and covariance matrices
+        # TODO: Complexify this function to handle different variance weights for different satellites
+        cov_m = block_diag(*[ind_cov for _ in range(n_sats)])
+        cov_p = block_diag(*[ind_cov for _ in range(n_sats)])
+        x_m = np.zeros((state_dim*n_sats))
+        x_p = np.zeros((state_dim*n_sats))
+
+        A = np.zeros((n_sats*state_dim, n_sats*state_dim))
+
+        for i in range(n_sats):
+            x_m[i*state_dim:(i+1)*state_dim] = sats[i].x_m
+            x_p[i*state_dim:(i+1)*state_dim] = sats[i].x_p
+
+        # Looping for timesteps
         for i in range(N):
             print("Timestep: ", i)
 
-            for sat in sats_copy:
+            for k, sat in enumerate(sats_copy):
                 sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
-                A = state_transition(sat.x_m)
                 sat.x_p = rk4_discretization(sat.x_m, dt)
-                sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
-
-                # FIM Calculations
-                D11 = A.T@np.linalg.inv(Q)@A
-                D12 = -A.T@np.linalg.inv(Q)
+                # sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
                 
-                f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
+                #Assign the state transition matrix to the correct block in the A matrix
+                A[k*state_dim:(k+1)*state_dim,k*state_dim:(k+1)*state_dim] = state_transition(sat.x_m)
 
-            for sat in sats_copy:
+                #Update the combined state vector
+                x_p[k*state_dim:(k+1)*state_dim] = sat.x_p
+
+
+            # FIM Calculations
+            D11 = A.T@np.linalg.inv(Q_block)@A
+            D12 = -A.T@np.linalg.inv(Q_block)
+            
+            f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
+
+            #Update the combined covariance matrix 
+            cov_p = A@cov_m@A.T + Q_block
+
+            comb_y_m = np.array([])
+            comb_h = np.array([])
+            comb_H = np.array([[]])
+
+            for k, sat in enumerate(sats_copy):
 
                 #Get visible landmarks
                 visible_landmarks = sat.visible_landmarks_list(sat.x_p)
@@ -142,22 +174,30 @@ if __name__ == "__main__":
                 # Re-initialize the measurement matrices for each satellite with the correct dimensions
                 # based on the number of visible landmarks
                 y_m = np.zeros((meas_dim))
-                H = np.zeros((meas_dim,state_dim))
+                H = np.zeros((meas_dim,state_dim*n_sats))
                 h = np.zeros((meas_dim))
 
                 # Re-initialize the measurement noise covariance matrix with correct dimensions
-                R = np.eye(meas_dim)*R_weight
+                # R = np.eye(meas_dim)*R_weight
 
                 #Calculate H
-                H[0:sat.bearing_dim,0:state_dim] = sat.H_landmark(sat.x_p)
+                H[0:sat.bearing_dim,k*state_dim:(k+1)*state_dim] = sat.H_landmark(sat.x_p)
+
+
+                other_sat_id = 0
                 for j in range(sat.bearing_dim,meas_dim):
-                    H[j,:] = sat.H_inter_range(i+1, j, sat.x_p)
+                    # other_sat_id = j-sat.bearing_dim + 1
+                    range_dist = sat.H_inter_range(i+1, j, sat.x_p)
+                    H[j,sat.id*state_dim:(sat.id+1)*state_dim] = range_dist
+                    if other_sat_id == sat.id:
+                        other_sat_id += 1
+                        H[j,other_sat_id*state_dim:(other_sat_id+1)*state_dim] = -range_dist
+                    else:
+                        H[j,other_sat_id*state_dim:(other_sat_id+1)*state_dim] = -range_dist
+                        other_sat_id += 1
 
                 # FIM Calculation
-                f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@np.linalg.inv(R)@H + np.linalg.inv(Q)
-
-                #Calculate K
-                K = sat.cov_p@H.T@np.linalg.inv(H@sat.cov_p@H.T + R)
+                # f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@np.linalg.inv(R)@H + np.linalg.inv(Q)
 
                 #Calculate h
                 h[0:sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
@@ -167,36 +207,49 @@ if __name__ == "__main__":
                 y_m[0:sat.bearing_dim] = sat.measure_z_landmark()
                 y_m[sat.bearing_dim:meas_dim] = sat.measure_z_range(sats_copy)
 
-                sat.x_m = sat.x_p + K@(y_m - h)
-                sat.cov_m = (np.eye(state_dim) - K@H)@sat.cov_p@((np.eye(state_dim) - K@H).T) + K@R@K.T
-
-                cov_hist[i,sat.id,:,:] += sat.cov_m
-
-                filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
-                pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
-
-                # Sanity check that Cov - FIM is positive definite (Should always be true)
-                if np.linalg.matrix_rank(f_post[:,:,sat.id]) == state_dim:
-                    if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post[:,:,sat.id])) > 0):
-                        print(f"Satellite {sat.id} FIM is NOT positive definite. Something went wrong!!!")
-
-                # Check if f_post is invertible
-                if np.linalg.matrix_rank(f_post[:,:,sat.id]) != state_dim:
-                    if verbose:
-                        print(f_post[:,:,sat.id])
-                        print(f"Satellite {sat.id} FIM is not invertible")
-
+                #Append vectors and matrices to combined form
+                comb_y_m = np.append(comb_y_m, y_m, axis=0)
+                comb_h = np.append(comb_h, h, axis=0)
+                if k == 0: 
+                    comb_H = H
                 else:
-                    eig_val, eig_vec = np.linalg.eig(f_post[:,:,sat.id])
-                    if verbose:
-                        print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
-                    # print("Condition number of FIM: ", np.linalg.cond(f_post))
-                    # print("Eigenvectors of FIM: ", eig_vec)
+                    comb_H = np.append(comb_H, H, axis=0)
+            
+            #Create R based on the number of measurements of all satellites
+            R = np.eye(comb_y_m.shape[0])*R_weight
+
+            #Calculate K
+            K = cov_p@comb_H.T@np.linalg.inv(comb_H@cov_p@comb_H.T + R)
+            x_m = x_p + K@(comb_y_m - comb_h)
+            cov_m = (np.eye(state_dim*n_sats) - K@comb_H)@cov_p@((np.eye(state_dim*n_sats) - K@comb_H).T) + K@R@K.T
+
+                # cov_hist[i,sat.id,:,:] += sat.cov_m
+
+                # filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
+                # pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
+
+                # # Sanity check that Cov - FIM is positive definite (Should always be true)
+                # if np.linalg.matrix_rank(f_post[:,:,sat.id]) == state_dim:
+                #     if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post[:,:,sat.id])) > 0):
+                #         print(f"Satellite {sat.id} FIM is NOT positive definite. Something went wrong!!!")
+
+                # # Check if f_post is invertible
+                # if np.linalg.matrix_rank(f_post[:,:,sat.id]) != state_dim:
+                #     if verbose:
+                #         print(f_post[:,:,sat.id])
+                #         print(f"Satellite {sat.id} FIM is not invertible")
+
+                # else:
+                #     eig_val, eig_vec = np.linalg.eig(f_post[:,:,sat.id])
+                #     if verbose:
+                #         print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
+                #     # print("Condition number of FIM: ", np.linalg.cond(f_post))
+                #     # print("Eigenvectors of FIM: ", eig_vec)
                 
             #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
-            if i > 0:
-                start_i = i * state_dim
-                fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post[:,:,0]
+            # if i > 0:
+            #     start_i = i * state_dim
+            #     fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post[:,:,0]
         
         sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
 
