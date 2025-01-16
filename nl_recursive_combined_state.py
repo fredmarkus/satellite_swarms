@@ -9,7 +9,7 @@ import yaml
 from landmark import landmark, latlon2ecef
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization, state_transition
-from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
+from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error, plot_covariance_crb_trace
 
 if __name__ == "__main__":
 
@@ -103,13 +103,13 @@ if __name__ == "__main__":
 
 
     ## Calculate FIM directly in recursive fashion.
-    fim = np.zeros((num_trials,N*state_dim, N*state_dim))
+    fim = np.zeros((num_trials, N, state_dim*n_sats, state_dim*n_sats))
+    cov_hist = np.zeros((num_trials, N, state_dim*n_sats, state_dim*n_sats))
 
-    cov_hist = np.zeros((N,n_sats,state_dim,state_dim))
     sats_copy = copy.deepcopy(sats)
 
-    filter_position = np.zeros((num_trials, N, 3, n_sats))
-    pos_error = np.zeros((num_trials, N , 3, n_sats))
+    filter_position = np.zeros((num_trials, N, 3*n_sats))
+    pos_error = np.zeros((num_trials, N , 3*n_sats))
 
     Q = np.diag(np.array([10e-6,10e-6,10e-6,10e-12,10e-12,10e-12]))
     Q_block = block_diag(*[Q for _ in range(n_sats)])
@@ -119,8 +119,8 @@ if __name__ == "__main__":
     for trial in range(num_trials):
         print("Monte Carlo Trial: ", trial)
 
-        f_prior = np.zeros((state_dim, state_dim, n_sats))
-        f_post = np.zeros((state_dim, state_dim, n_sats))
+        f_prior = np.zeros((state_dim*n_sats, state_dim*n_sats))
+        f_post = np.zeros((state_dim*n_sats, state_dim*n_sats))
 
         # Initialize the combined state vector and covariance matrices
         # TODO: Complexify this function to handle different variance weights for different satellites
@@ -128,6 +128,8 @@ if __name__ == "__main__":
         cov_p = block_diag(*[ind_cov for _ in range(n_sats)])
         x_m = np.zeros((state_dim*n_sats))
         x_p = np.zeros((state_dim*n_sats))
+
+        comb_curr_pos = np.zeros((3*n_sats))
 
         A = np.zeros((n_sats*state_dim, n_sats*state_dim))
 
@@ -142,20 +144,20 @@ if __name__ == "__main__":
             for k, sat in enumerate(sats_copy):
                 sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
                 sat.x_p = rk4_discretization(sat.x_m, dt)
-                # sat.cov_p = A@sat.cov_m@A.T + Q # Update the covariance matrix as a P_p = A*P*A^T + LQL^T
                 
                 #Assign the state transition matrix to the correct block in the A matrix
                 A[k*state_dim:(k+1)*state_dim,k*state_dim:(k+1)*state_dim] = state_transition(sat.x_m)
 
-                #Update the combined state vector
+                #Update the combined state vector and underlying groundtruth
                 x_p[k*state_dim:(k+1)*state_dim] = sat.x_p
+                comb_curr_pos[k*3:(k+1)*3] = sat.curr_pos
 
 
             # FIM Calculations
             D11 = A.T@np.linalg.inv(Q_block)@A
             D12 = -A.T@np.linalg.inv(Q_block)
             
-            f_prior[:,:,sat.id] = D12.T@np.linalg.inv(f_post[:,:,sat.id] + D11)@D12
+            f_prior = D12.T@np.linalg.inv(f_post + D11)@D12
 
             #Update the combined covariance matrix 
             cov_p = A@cov_m@A.T + Q_block
@@ -196,8 +198,6 @@ if __name__ == "__main__":
                         H[j,other_sat_id*state_dim:(other_sat_id+1)*state_dim] = -range_dist
                         other_sat_id += 1
 
-                # FIM Calculation
-                # f_post[:,:,sat.id] = f_prior[:,:,sat.id] + H.T@np.linalg.inv(R)@H + np.linalg.inv(Q)
 
                 #Calculate h
                 h[0:sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
@@ -222,46 +222,57 @@ if __name__ == "__main__":
             K = cov_p@comb_H.T@np.linalg.inv(comb_H@cov_p@comb_H.T + R)
             x_m = x_p + K@(comb_y_m - comb_h)
             cov_m = (np.eye(state_dim*n_sats) - K@comb_H)@cov_p@((np.eye(state_dim*n_sats) - K@comb_H).T) + K@R@K.T
+            
+            # FIM Calculation
+            f_post = f_prior + comb_H.T@np.linalg.inv(R)@comb_H + np.linalg.inv(Q_block)
 
-                # cov_hist[i,sat.id,:,:] += sat.cov_m
+            # Assign Posterior Covariance
+            cov_hist[trial,i,:,:] = cov_m
 
-                # filter_position[trial,i,:,sat.id] = sat.x_m[0:3]
-                # pos_error[trial, i,:,sat.id] = filter_position[trial,i,:,sat.id] - sat.curr_pos[0:3]
+            filter_position[trial,i,:] = np.array([x_m[0::6], x_m[1::6], x_m[2::6]]).transpose().reshape(-1)
+            pos_error[trial,i,:] = filter_position[trial,i,:] - comb_curr_pos
 
-                # # Sanity check that Cov - FIM is positive definite (Should always be true)
-                # if np.linalg.matrix_rank(f_post[:,:,sat.id]) == state_dim:
-                #     if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post[:,:,sat.id])) > 0):
-                #         print(f"Satellite {sat.id} FIM is NOT positive definite. Something went wrong!!!")
+            # Sanity check that Cov - FIM is positive definite (Should always be true)
+            if np.linalg.matrix_rank(f_post) == state_dim:
+                if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post)) > 0):
+                    print(f"Satellite {sat.id} FIM is NOT positive definite. Something went wrong!!!")
 
-                # # Check if f_post is invertible
-                # if np.linalg.matrix_rank(f_post[:,:,sat.id]) != state_dim:
-                #     if verbose:
-                #         print(f_post[:,:,sat.id])
-                #         print(f"Satellite {sat.id} FIM is not invertible")
+            # # Check if f_post is invertible
+            if np.linalg.matrix_rank(f_post) != state_dim:
+                if verbose:
+                    print(f_post)
+                    print(f"Satellite {sat.id} FIM is not invertible")
 
-                # else:
-                #     eig_val, eig_vec = np.linalg.eig(f_post[:,:,sat.id])
-                #     if verbose:
-                #         print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
-                #     # print("Condition number of FIM: ", np.linalg.cond(f_post))
-                #     # print("Eigenvectors of FIM: ", eig_vec)
+            else:
+                eig_val, eig_vec = np.linalg.eig(f_post)
+                if verbose:
+                    print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
+                    print("Condition number of FIM: ", np.linalg.cond(f_post))
+                    print("Eigenvectors of FIM: ", eig_vec)
                 
-            #Assume no knowledge at initial state so we don't place any information in the first state_dim x state_dim block
-            # if i > 0:
-            #     start_i = i * state_dim
-            #     fim[trial, start_i:start_i+state_dim,start_i:start_i+state_dim] = f_post[:,:,0]
+            start_i = i * state_dim * n_sats
+            fim[trial,i,:,:] = f_post
         
         sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
 
-    # Average FIM
+    # Average FIM and covariance history
     fim = np.mean(fim, axis=0)
+    cov_hist = np.mean(cov_hist,axis=0)
 
-    #Get the average covariance matrix for each satellite for each timestep
+    # With the given covariance matrix over all time steps, we can calculate the trace of the covariance matrix
+    # We divide this by the number of satellites to get satellite-normalize trace of the covariance matrix
+    cov_trace = np.zeros((N))
     for i in range(N):
-        for sat in sats:
-            cov_hist[i,sat.id,:,:] = cov_hist[i,sat.id,:,:]/num_trials
+        cov_trace[i] = np.trace(cov_hist[i,:,:])/n_sats
 
-    sat1_cov_hist = cov_hist[:,0,:,:]
+    # Invert FIM to get crb
+    crb = np.zeros_like(fim)
+    crb_trace = np.zeros((N))
+    for i in range(N):
+        crb[i,:,:] = np.linalg.inv(fim[i,:,:])
+        crb_trace[i] = np.trace(crb[i,:,:])/n_sats
+
+    
 
     # The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
     # fim_acc = fim[state_dim:,state_dim:]
@@ -270,16 +281,19 @@ if __name__ == "__main__":
     # crb_final[state_dim:,state_dim:] = crb
 
     # Using pseudo-inverse to invert the matrix
-    crb = np.linalg.pinv(fim)
-    crb_diag = np.diag(crb)
+    # crb = np.linalg.pinv(fim)
+    # crb_diag = np.diag(crb)
 
     # Plot the covariance matrix and the FIM diagonal entries.
-    plot_covariance_crb(crb_diag, state_dim, sat1_cov_hist)
+    # plot_covariance_crb(crb_diag, state_dim, cov_hist)
 
     # Plot the trajectory of the satellite
-    plot_trajectory(x_traj, filter_position, N)
+    # plot_trajectory(x_traj, filter_position, N)
 
     # Plot the positional error
-    plot_position_error(pos_error)
+    # plot_position_error(pos_error)
+
+    # Plot crb and cov trace
+    plot_covariance_crb_trace(crb_trace, cov_trace)
 
     plt.show()
