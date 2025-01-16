@@ -28,7 +28,8 @@ class satellite:
                  orbital_elements: dict,
                  camera_exists: bool,
                  camera_fov: float,
-                 verbose: bool) -> None:
+                 verbose: bool,
+                 ignore_earth: bool) -> None:
         
         # Calculate initial state based on orbital elements placing 
         a = float(orbital_elements["a"])
@@ -61,6 +62,7 @@ class satellite:
         self.camera_fov = camera_fov
         self.bearing_dim = bearing_dim
         self.verbose = verbose
+        self.ignore_earth = ignore_earth
         
         # Initialize the measurement vector with noise
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
@@ -109,8 +111,7 @@ class satellite:
     def h_inter_range(self, timestep, j, x): # This function calculates the range measurement between the satellite and another satellite
         sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
-        #TODO: Provide fix here using an argument flag to say whether we can ignore the earth or not.
-        if self.is_visible_ellipse(x[0:3], sat_pos):
+        if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:
             return jnp.linalg.norm(x[0:3] - sat_pos) 
         else:
             return jnp.linalg.norm(0)
@@ -125,8 +126,7 @@ class satellite:
         z = np.empty((0))
         for sat in sats:
             if sat.id != self.id:
-                #TODO: Provide fix here using an argument flag to say whether we can ignore the earth or not.
-                if self.is_visible_ellipse(self.curr_pos, sat.curr_pos): # If the earth is not in the way, we can measure the range
+                if self.is_visible_ellipse(self.curr_pos, sat.curr_pos) or self.ignore_earth: # If the earth is not in the way, we can measure the range. Or if earth is ignored
                     if self.verbose:
                         print(f"Satellite {self.id} can see satellite {sat.id}")
                     noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
@@ -134,7 +134,6 @@ class satellite:
                     z = np.append(z,d,axis=0)
 
                 else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
-                   
                     z = np.append(z,np.array([0]),axis=0)
         return z
     

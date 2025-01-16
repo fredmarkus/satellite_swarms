@@ -39,6 +39,7 @@ if __name__ == "__main__":
     parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
     parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
     parser.add_argument('--verbose', type=bool, default=False, help='Print information')
+    parser.add_argument('--ignore_earth', type=bool, default=True, help='Ignore the Earth from blocking measurements. Only applies to range measurements. Bearing measurements always consider the earth.')
     args = parser.parse_args()
 
     N = args.N
@@ -46,7 +47,6 @@ if __name__ == "__main__":
     n_sats = args.n_sats
     R_weight = args.R_weight
     state_dim = args.state_dim
-    verbose = args.verbose
     
     #MC Parameters
     num_trials = args.num_trials
@@ -78,7 +78,8 @@ if __name__ == "__main__":
             sat_config["n_sats"] = n_sats
             sat_config["R_weight"] = R_weight
             sat_config["bearing_dim"] = bearing_dim
-            sat_config["verbose"] = verbose
+            sat_config["verbose"] = args.verbose
+            sat_config["ignore_earth"] = args.ignore_earth
 
             satellite_inst = satellite(**sat_config)
             sats.append(satellite_inst)
@@ -180,9 +181,6 @@ if __name__ == "__main__":
                 H = np.zeros((meas_dim,state_dim*n_sats))
                 h = np.zeros((meas_dim))
 
-                # Re-initialize the measurement noise covariance matrix with correct dimensions
-                # R = np.eye(meas_dim)*R_weight
-
                 #Calculate H
                 H[0:sat.bearing_dim,k*state_dim:(k+1)*state_dim] = sat.H_landmark(sat.x_p)
 
@@ -244,13 +242,13 @@ if __name__ == "__main__":
 
             # # Check if f_post is invertible
             if np.linalg.matrix_rank(f_post) != state_dim:
-                if verbose:
+                if args.verbose:
                     print(f_post)
                     print(f"Satellite {sat.id} FIM is not invertible")
 
             else:
                 eig_val, eig_vec = np.linalg.eig(f_post)
-                if verbose:
+                if args.verbose:
                     print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
                     print("Condition number of FIM: ", np.linalg.cond(f_post))
                     print("Eigenvectors of FIM: ", eig_vec)
