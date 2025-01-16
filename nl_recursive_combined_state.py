@@ -4,6 +4,7 @@ import csv
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import block_diag
+from tqdm import tqdm
 import yaml
 
 from landmark import landmark, latlon2ecef
@@ -28,7 +29,6 @@ if __name__ == "__main__":
     # Initialize the landmark objects with their correct name and the ECEF coordinates
     for landmark_obj in landmarks_ecef:
         landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
-
 
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
@@ -99,8 +99,6 @@ if __name__ == "__main__":
                     sat.other_sats_pos[:,:,sat_i] = x_traj[:,0:3,other_sat.id] # Transfer all N+1 3D positions of the other satellites from x_traj
                     sat_i += 1
 
-    # NOTE: We are only doing these trials for one satellites (for now)
-
 
     ## Calculate FIM directly in recursive fashion.
     fim = np.zeros((num_trials, N, state_dim*n_sats, state_dim*n_sats))
@@ -116,8 +114,7 @@ if __name__ == "__main__":
     ind_cov = np.diag(np.array([1,1,1,0.1,0.1,0.1])) # Individual covariance matrix for each satellite
 
 
-    for trial in range(num_trials):
-        print("Monte Carlo Trial: ", trial)
+    for trial in tqdm(range(num_trials), desc="Monte Carlo Trials"):
 
         f_prior = np.zeros((state_dim*n_sats, state_dim*n_sats))
         f_post = np.zeros((state_dim*n_sats, state_dim*n_sats))
@@ -133,13 +130,12 @@ if __name__ == "__main__":
 
         A = np.zeros((n_sats*state_dim, n_sats*state_dim))
 
+        #Initialize the measurement states using satellites initial measurement state
         for i in range(n_sats):
             x_m[i*state_dim:(i+1)*state_dim] = sats[i].x_m
-            x_p[i*state_dim:(i+1)*state_dim] = sats[i].x_p
 
         # Looping for timesteps
-        for i in range(N):
-            print("Timestep: ", i)
+        for i in tqdm(range(N), desc="Timesteps"):
 
             for k, sat in enumerate(sats_copy):
                 sat.curr_pos = x_traj[i+1,0:3,sat.id] #Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
@@ -222,6 +218,11 @@ if __name__ == "__main__":
             K = cov_p@comb_H.T@np.linalg.inv(comb_H@cov_p@comb_H.T + R)
             x_m = x_p + K@(comb_y_m - comb_h)
             cov_m = (np.eye(state_dim*n_sats) - K@comb_H)@cov_p@((np.eye(state_dim*n_sats) - K@comb_H).T) + K@R@K.T
+
+            # Set sat's x_m so that they can be used for the next prior update x_p state.
+            # Individual covariances of sats don't matter for this because we use the full covariances
+            for sat in sats_copy:
+                sat.x_m = x_m[sat.id*state_dim:(sat.id+1)*state_dim]
             
             # FIM Calculation
             f_post = f_prior + comb_H.T@np.linalg.inv(R)@comb_H + np.linalg.inv(Q_block)
