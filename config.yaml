@@ -11,6 +11,7 @@ satellites:
     camera_exists: True
     camera_fov: 60.0
     verbose: False
+    ignore_earth: False
 
 
   - robot_id: 1
@@ -23,6 +24,7 @@ satellites:
     camera_exists: True
     camera_fov: 60.0
     verbose: False
+    ignore_earth: False
 
 
   - robot_id: 2
@@ -35,6 +37,7 @@ satellites:
     camera_exists: True
     camera_fov: 60.0
     verbose: False
+    ignore_earth: False
 
 
   - robot_id: 3
@@ -47,6 +50,7 @@ satellites:
     camera_exists: True
     camera_fov: 60.0
     verbose: False
+    ignore_earth: False
 
 
   - robot_id: 4
@@ -59,3 +63,4 @@ satellites:
     camera_exists: True
     camera_fov: 60.0
     verbose: False
+    ignore_earth: False
