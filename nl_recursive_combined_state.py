@@ -68,18 +68,23 @@ if __name__ == "__main__":
 
     sats = []
 
-    for sat_config in config["satellites"]:
-
+    for i, sat_config in enumerate(config["satellites"]):
+        
+        # Only create the number of satellites specified in the argument. The rest of the yaml file is ignored
+        if i < n_sats:
         # Overwrite the following yaml file parameters with values provided in this script
-        sat_config["N"] = N
-        sat_config["landmarks"] = landmark_objects
-        sat_config["n_sats"] = n_sats
-        sat_config["R_weight"] = R_weight
-        sat_config["bearing_dim"] = bearing_dim
-        sat_config["verbose"] = verbose
+            sat_config["N"] = N
+            sat_config["landmarks"] = landmark_objects
+            sat_config["n_sats"] = n_sats
+            sat_config["R_weight"] = R_weight
+            sat_config["bearing_dim"] = bearing_dim
+            sat_config["verbose"] = verbose
 
-        satellite_inst = satellite(**sat_config)
-        sats.append(satellite_inst)
+            satellite_inst = satellite(**sat_config)
+            sats.append(satellite_inst)
+            
+        else:
+            break
 
 
     # Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps;
@@ -181,7 +186,6 @@ if __name__ == "__main__":
                 #Calculate H
                 H[0:sat.bearing_dim,k*state_dim:(k+1)*state_dim] = sat.H_landmark(sat.x_p)
 
-
                 other_sat_id = 0
                 for j in range(sat.bearing_dim,meas_dim):
                     # other_sat_id = j-sat.bearing_dim + 1
@@ -251,10 +255,9 @@ if __name__ == "__main__":
                     print("Condition number of FIM: ", np.linalg.cond(f_post))
                     print("Eigenvectors of FIM: ", eig_vec)
                 
-            start_i = i * state_dim * n_sats
             fim[trial,i,:,:] = f_post
         
-        sats_copy = copy.deepcopy(sats) # Reset the satellites for the next trial
+        sats_copy = copy.deepcopy(sats) # Reset the satellites to initial condition for the next trial
 
     # Average FIM and covariance history
     fim = np.mean(fim, axis=0)
@@ -273,20 +276,6 @@ if __name__ == "__main__":
         crb[i,:,:] = np.linalg.inv(fim[i,:,:])
         crb_trace[i] = np.trace(crb[i,:,:])/n_sats
 
-    
-
-    # The FIM should be the inverse of the Cramer-Rao Bound. Isolating first step as it is full of 0 values and nor invertible.
-    # fim_acc = fim[state_dim:,state_dim:]
-    # crb = np.linalg.inv(fim_acc)
-    # crb_final = np.zeros((N*state_dim,N*state_dim))
-    # crb_final[state_dim:,state_dim:] = crb
-
-    # Using pseudo-inverse to invert the matrix
-    # crb = np.linalg.pinv(fim)
-    # crb_diag = np.diag(crb)
-
-    # Plot the covariance matrix and the FIM diagonal entries.
-    # plot_covariance_crb(crb_diag, state_dim, cov_hist)
 
     # Plot the trajectory of the satellite
     # plot_trajectory(x_traj, filter_position, N)
