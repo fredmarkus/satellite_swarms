@@ -1,3 +1,5 @@
 __pycache__/
 .vscode/
 images/
+data/
+config/sat_autogen.yaml

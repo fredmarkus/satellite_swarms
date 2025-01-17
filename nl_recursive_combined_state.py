@@ -3,6 +3,7 @@ import copy
 import csv
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 from scipy.linalg import block_diag
 from tqdm import tqdm
 import yaml
@@ -11,36 +12,10 @@ from landmark import landmark, latlon2ecef
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization, state_transition
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error, plot_covariance_crb_trace
-
-if __name__ == "__main__":
-
-    ### Landmark Initialization ###
-    # Import csv data for the lanldmarks
-    landmarks = []
-    with open('landmark_coordinates.csv', newline='',) as csvfile:
-        reader = csv.reader(csvfile, delimiter=',',)
-        for row in reader:
-            landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
+from utils.yaml_autogen_utils import generate_satellites_yaml
 
 
-    landmarks_ecef = latlon2ecef(landmarks)
-    landmark_objects = []
-
-    # Initialize the landmark objects with their correct name and the ECEF coordinates
-    for landmark_obj in landmarks_ecef:
-        landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
-
-    #General Parameters
-    parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
-    parser.add_argument('--N', type=int, default=100, help='Number of timesteps')
-    parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
-    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
-    parser.add_argument('--R_weight', type=float, default=10e-5, help='Measurement noise weight')
-    parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
-    parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
-    parser.add_argument('--verbose', type=bool, default=False, help='Print information')
-    parser.add_argument('--ignore_earth', type=bool, default=True, help='Ignore the Earth from blocking measurements. Only applies to range measurements. Bearing measurements always consider the earth.')
-    args = parser.parse_args()
+def run_simulation(args):
 
     N = args.N
     dt = 1/args.f #Hz
@@ -63,8 +38,19 @@ if __name__ == "__main__":
     # np.random.seed(42)        #Set seed for reproducibility
 
     ### Satellite Initialization ###
-    with open("sat_autogen.yaml", "r") as file:
-        config = yaml.safe_load(file)
+    if args.random_yaml:
+        with open("config/sat_autogen.yaml", "r") as file:
+            config = yaml.safe_load(file)
+
+    else:
+        with open("config/config.yaml", "r") as file:
+            config = yaml.safe_load(file)
+
+            if len(config["satellites"]) < n_sats:
+                raise ValueError("""Number of satellites specified is greater than the number of satellites in the yaml file. 
+                                 Add --random_yaml flag to generate random satellite configuration for the provided number of 
+                                 satellites or create custom satellites in config/config.yaml""")
+
 
     sats = []
 
@@ -274,6 +260,13 @@ if __name__ == "__main__":
         crb[i,:,:] = np.linalg.inv(fim[i,:,:])
         crb_trace[i] = np.trace(crb[i,:,:])/n_sats
 
+    if not os.path.exists("data"):
+        os.makedirs("data")
+
+    np.save(f'data/cov_trace_{n_sats}.npy', cov_trace)
+    np.save(f'data/crb_trace_{n_sats}.npy', crb_trace)
+
+    # Plotting
 
     # Plot the trajectory of the satellite
     # plot_trajectory(x_traj, filter_position, N)
@@ -285,3 +278,49 @@ if __name__ == "__main__":
     plot_covariance_crb_trace(crb_trace, cov_trace)
 
     plt.show()
+
+
+if __name__ == "__main__":
+
+    ### Landmark Initialization ###
+    # Import csv data for the lanldmarks
+    landmarks = []
+    with open('landmark_coordinates.csv', newline='',) as csvfile:
+        reader = csv.reader(csvfile, delimiter=',',)
+        for row in reader:
+            landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
+
+
+    landmarks_ecef = latlon2ecef(landmarks)
+    landmark_objects = []
+
+    # Initialize the landmark objects with their correct name and the ECEF coordinates
+    for landmark_obj in landmarks_ecef:
+        landmark_objects.append(landmark(x=float(landmark_obj[1]), y=float(landmark_obj[2]), z=float(landmark_obj[3]), name=(landmark_obj[0])))
+
+    #General Parameters
+    parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
+    parser.add_argument('--N', type=int, default=100, help='Number of timesteps')
+    parser.add_argument('--R_weight', type=float, default=10e-5, help='Measurement noise weight')
+    parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
+    parser.add_argument('--ignore_earth', action="store_true", default=False, help='Ignore the Earth from blocking measurements. Only applies to range measurements. \
+                        Bearing measurements always consider the earth.')
+    parser.add_argument('--num_trials', type=int, default=1, help='Number of Monte Carlo trials')
+    parser.add_argument('--n_sats', type=int, default=1, help='Number of satellites')
+    parser.add_argument('--random_yaml',action="store_true", default=False, help='Use random satellite configuration')
+    parser.add_argument('--run_all', action="store_true", default=False, help='Run simulations for all number of satellites from 1 to n_sats')
+    parser.add_argument('--state_dim', type=int, default=6, help='Dimension of the state vector')
+    parser.add_argument('--verbose', action="store_true", default=False, help='Print information')
+    args = parser.parse_args()
+
+    if args.random_yaml:
+        if not os.path.exists("config"):
+            os.makedirs("config")
+        generate_satellites_yaml(filename="config/sat_autogen.yaml", n_sats=args.n_sats)
+
+    if args.run_all:
+        for i in range(1, args.n_sats+1):
+            args.n_sats = i
+            run_simulation(args)
+    else:
+        run_simulation(args)
