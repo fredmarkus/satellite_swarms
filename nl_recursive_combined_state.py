@@ -63,7 +63,7 @@ if __name__ == "__main__":
     # np.random.seed(42)        #Set seed for reproducibility
 
     ### Satellite Initialization ###
-    with open("config.yaml", "r") as file:
+    with open("sat_autogen.yaml", "r") as file:
         config = yaml.safe_load(file)
 
     sats = []
