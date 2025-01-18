@@ -2,7 +2,8 @@
 
 import matplotlib.pyplot as plt
 import numpy as np
-
+import os
+import random
 
 def plot_covariance_crb(crb_diag, state_dim, cov_hist):
     # Plot the covariance matrix and the FIM diagonal entries.
@@ -88,3 +89,31 @@ def plot_covariance_crb_trace(crb_trace, cov_trace):
     plt.title('Covariance Matrix and CRB ')
     plt.xlabel('Timestep')
     plt.legend()
+
+def plot_all_sat_crb_trace():
+
+    linestyles = ["-", "--", "-.", ":"] 
+    colors = ['red', 'blue', 'green', 'orange', 'purple', 'black', 'yellow', 'pink', 'brown', 'cyan']
+
+    directory_path = "data/"
+
+    plt.figure()
+    for file_name in os.listdir(directory_path):
+        if file_name.endswith(".npy"):
+            i = int(file_name[0])
+            file_path = os.path.join(directory_path, file_name)
+            arr = np.load(file_path)
+            if "crb" in file_name:
+                plt.plot(arr[1:], label=f'CRB Trace {i} sat', color=colors[i-1 % len(colors)], linestyle='--')
+            elif "cov" in file_name:
+                plt.plot(arr[1:], label=f'COV Trace {i} sat', color=colors[i-1 % len(colors)], linestyle='-')
+            
+    
+    plt.title('Covariance Matrix and CRB trace for different numbers of satellites')
+    plt.xlabel('Timestep')
+    plt.legend()
+
+
+def random_color():
+    # Return a random hex color like '#3A2F1B'
+    return "#{:06x}".format(random.randint(0, 0xFFFFFF))

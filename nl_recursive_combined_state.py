@@ -11,7 +11,7 @@ import yaml
 from landmark import landmark, latlon2ecef
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization, state_transition
-from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error, plot_covariance_crb_trace
+from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error, plot_covariance_crb_trace, plot_all_sat_crb_trace
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
 
@@ -27,7 +27,7 @@ def run_simulation(args):
     num_trials = args.num_trials
 
     bearing_dim = len(landmark_objects)*3
-    meas_dim = n_sats-1 + bearing_dim   
+    meas_dim = n_sats-1 + bearing_dim
 
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites" by OU Yangwei, ZHANG Hongbo, XING Jianjun
     # page 6
@@ -106,7 +106,7 @@ def run_simulation(args):
     ind_cov = np.diag(np.array([1,1,1,0.1,0.1,0.1])) # Individual covariance matrix for each satellite
 
 
-    for trial in tqdm(range(num_trials), desc="Monte Carlo Trials"):
+    for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):
 
         f_prior = np.zeros((state_dim*n_sats, state_dim*n_sats))
         f_post = np.zeros((state_dim*n_sats, state_dim*n_sats))
@@ -263,8 +263,8 @@ def run_simulation(args):
     if not os.path.exists("data"):
         os.makedirs("data")
 
-    np.save(f'data/cov_trace_{n_sats}.npy', cov_trace)
-    np.save(f'data/crb_trace_{n_sats}.npy', crb_trace)
+    np.save(f'data/{n_sats}_cov_trace.npy', cov_trace)
+    np.save(f'data/{n_sats}_crb_trace.npy', crb_trace)
 
     # Plotting
 
@@ -275,9 +275,9 @@ def run_simulation(args):
     # plot_position_error(pos_error)
 
     # Plot crb and cov trace
-    plot_covariance_crb_trace(crb_trace, cov_trace)
+    # plot_covariance_crb_trace(crb_trace, cov_trace)
 
-    plt.show()
+    # plt.show()
 
 
 if __name__ == "__main__":
@@ -313,6 +313,8 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', action="store_true", default=False, help='Print information')
     args = parser.parse_args()
 
+    os.system(f"rm -r data")
+
     if args.random_yaml:
         if not os.path.exists("config"):
             os.makedirs("config")
@@ -324,3 +326,8 @@ if __name__ == "__main__":
             run_simulation(args)
     else:
         run_simulation(args)
+
+
+    plot_all_sat_crb_trace()
+    plt.show()
+    
