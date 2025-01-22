@@ -274,8 +274,8 @@ def run_simulation(args):
     if not os.path.exists("data"):
         os.makedirs("data")
 
-    np.save(f'data/{n_sats}_cov_trace.npy', cov_trace)
-    np.save(f'data/{n_sats}_crb_trace.npy', crb_trace)
+    np.save(f'data/{n_sats}_cov-trace.npy', cov_trace)
+    np.save(f'data/{n_sats}_crb-trace.npy', crb_trace)
 
     # Plotting of error
     all_sat_position_error(pos_error, n_sats)

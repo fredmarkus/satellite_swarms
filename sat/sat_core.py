@@ -81,6 +81,7 @@ class satellite:
         self.curr_visible_landmarks = []
         self.HEIGHT = 550
 
+
     def visible_landmarks_list(self, x) -> int:
         norm_vec_sat = x[0:3]/jnp.linalg.norm(x[0:3])
         r_earth = x[0:3] - self.HEIGHT*norm_vec_sat

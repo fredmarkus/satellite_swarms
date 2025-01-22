@@ -100,13 +100,13 @@ def plot_all_sat_crb_trace():
     plt.figure()
     for file_name in os.listdir(directory_path):
         if file_name.endswith(".npy"):
-            i = int(file_name[0])
+            i = int(file_name[0:file_name.index("_")])
             file_path = os.path.join(directory_path, file_name)
             arr = np.load(file_path)
             if "crb" in file_name:
-                plt.plot(arr[1:], label=f'CRB Trace {i} sat', color=colors[i-1 % len(colors)], linestyle='--')
+                plt.plot(arr[1:], label=f'CRB Trace {i} sat', color=colors[i % len(colors)], linestyle='--')
             elif "cov" in file_name:
-                plt.plot(arr[1:], label=f'COV Trace {i} sat', color=colors[i-1 % len(colors)], linestyle='-')
+                plt.plot(arr[1:], label=f'COV Trace {i} sat', color=colors[i % len(colors)], linestyle='-')
             
     
     plt.title('Covariance Matrix and CRB trace for different numbers of satellites')
@@ -119,13 +119,6 @@ def all_sat_position_error(pos_error,n_sats):
     plt.figure()
     for i in range(n_sats):
         error = np.abs(np.sum(pos_error[:,i*3:(i+1)*3],axis=1))
-        
-    # plt.plot(filter_position[0,:,0,0], label='x position', color='red')
-    # plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
-    # plt.plot(filter_position[0,:,2,0], label='z position', color='green')
-    # plt.plot(x_traj[:,0,0], label='x position truth', color='red', linestyle='--')
-    # plt.plot(x_traj[:,1,0], label='y position truth', color='blue', linestyle='--')
-    # plt.plot(x_traj[:,2,0], label='z position truth', color='green', linestyle='--')
 
         plt.plot(error, label=f'position error sat {i}', color='red',linestyle=linestyles[i % len(linestyles)])
         plt.title(f'Absolute Position Error for {n_sats} satellites')
