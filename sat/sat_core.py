@@ -21,7 +21,8 @@ class satellite:
                  robot_id: int, 
                  dim: int, 
                  bearing_dim: int,
-                 R_weight: float, 
+                 R_weight_range: float,
+                 R_weight_bearing: float, 
                  N: int, 
                  n_sats: int, 
                  landmarks: object,
@@ -55,7 +56,8 @@ class satellite:
         self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
-        self.R_weight = R_weight # This is the variance weight for the measurement noise
+        self.R_weight_range = R_weight_range
+        self.R_weight_bearing = R_weight_bearing
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
         self.camera_exists = camera_exists
@@ -66,7 +68,7 @@ class satellite:
         
         # Initialize the measurement vector with noise
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=int(self.dim/2))
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=int(self.dim/2))
         x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
         self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
 
@@ -129,7 +131,7 @@ class satellite:
                 if self.is_visible_ellipse(self.curr_pos, sat.curr_pos) or self.ignore_earth: # If the earth is not in the way, we can measure the range. Or if earth is ignored
                     if self.verbose:
                         print(f"Satellite {self.id} can see satellite {sat.id}")
-                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(1))
+                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
                     d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
                     z = np.append(z,d,axis=0)
 
@@ -146,7 +148,7 @@ class satellite:
             for i, landmark in enumerate(self.curr_visible_landmarks):
                 if self.verbose:
                     print(f"Satellite {self.id} can see landmark {landmark.name} visible")
-                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight),size=(int(self.dim/2)))
+                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=(int(self.dim/2)))
                 vec = self.curr_pos - landmark.pos + noise
                 z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
 

@@ -114,6 +114,24 @@ def plot_all_sat_crb_trace():
     plt.legend()
 
 
+def all_sat_position_error(pos_error,n_sats):
+    linestyles = ["-", "--", "-.", ":"] 
+    plt.figure()
+    for i in range(n_sats):
+        error = np.abs(np.sum(pos_error[:,i*3:(i+1)*3],axis=1))
+        
+    # plt.plot(filter_position[0,:,0,0], label='x position', color='red')
+    # plt.plot(filter_position[0,:,1,0], label='y position', color='blue')
+    # plt.plot(filter_position[0,:,2,0], label='z position', color='green')
+    # plt.plot(x_traj[:,0,0], label='x position truth', color='red', linestyle='--')
+    # plt.plot(x_traj[:,1,0], label='y position truth', color='blue', linestyle='--')
+    # plt.plot(x_traj[:,2,0], label='z position truth', color='green', linestyle='--')
+
+        plt.plot(error, label=f'position error sat {i}', color='red',linestyle=linestyles[i % len(linestyles)])
+        plt.title(f'Absolute Position Error for {n_sats} satellites')
+        plt.xlabel('Timestep')
+        plt.legend()
+
 def random_color():
     # Return a random hex color like '#3A2F1B'
     return "#{:06x}".format(random.randint(0, 0xFFFFFF))

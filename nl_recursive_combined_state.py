@@ -11,7 +11,7 @@ import yaml
 from landmark import landmark, latlon2ecef
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization, state_transition
-from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error, plot_covariance_crb_trace, plot_all_sat_crb_trace
+from utils.plotting_utils import plot_all_sat_crb_trace, all_sat_position_error
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
 
@@ -20,7 +20,8 @@ def run_simulation(args):
     N = args.N
     dt = 1/args.f #Hz
     n_sats = args.n_sats
-    R_weight = args.R_weight
+    R_weight_range = args.R_weight_range
+    R_weight_bearing = args.R_weight_bearing
     state_dim = args.state_dim
     
     #MC Parameters
@@ -62,7 +63,8 @@ def run_simulation(args):
             sat_config["N"] = N
             sat_config["landmarks"] = landmark_objects
             sat_config["n_sats"] = n_sats
-            sat_config["R_weight"] = R_weight
+            sat_config["R_weight_range"] = R_weight_range
+            sat_config["R_weight_bearing"] = R_weight_bearing
             sat_config["bearing_dim"] = bearing_dim
             sat_config["verbose"] = args.verbose
             sat_config["ignore_earth"] = args.ignore_earth
@@ -150,9 +152,11 @@ def run_simulation(args):
             #Update the combined covariance matrix 
             cov_p = A@cov_m@A.T + Q_block
 
-            comb_y_m = np.array([])
-            comb_h = np.array([])
-            comb_H = np.array([[]])
+            comb_y_m = np.array([]) # Combined measurement vector
+            comb_h = np.array([]) # Combined estimation vector
+            comb_H = np.array([[]]) # Combined Jacobian matrix
+
+            R_vec = np.array([]) # Combined measurement noise vector
 
             for k, sat in enumerate(sats_copy):
 
@@ -166,6 +170,7 @@ def run_simulation(args):
                 y_m = np.zeros((meas_dim))
                 H = np.zeros((meas_dim,state_dim*n_sats))
                 h = np.zeros((meas_dim))
+                R_vec = np.append(R_vec, [sat.R_weight_bearing] * sat.bearing_dim)
 
                 #Calculate H
                 H[0:sat.bearing_dim,k*state_dim:(k+1)*state_dim] = sat.H_landmark(sat.x_p)
@@ -175,6 +180,7 @@ def run_simulation(args):
                     # other_sat_id = j-sat.bearing_dim + 1
                     range_dist = sat.H_inter_range(i+1, j, sat.x_p)
                     H[j,sat.id*state_dim:(sat.id+1)*state_dim] = range_dist
+
                     if other_sat_id == sat.id:
                         other_sat_id += 1
                         H[j,other_sat_id*state_dim:(other_sat_id+1)*state_dim] = -range_dist
@@ -187,6 +193,7 @@ def run_simulation(args):
                 h[0:sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
                 for j in range(sat.bearing_dim,meas_dim):
                     h[j] = sat.h_inter_range(i+1, j, sat.x_p[0:3])
+                    R_vec = np.append(R_vec, sat.R_weight_range)
 
                 y_m[0:sat.bearing_dim] = sat.measure_z_landmark()
                 y_m[sat.bearing_dim:meas_dim] = sat.measure_z_range(sats_copy)
@@ -200,7 +207,7 @@ def run_simulation(args):
                     comb_H = np.append(comb_H, H, axis=0)
             
             #Create R based on the number of measurements of all satellites
-            R = np.eye(comb_y_m.shape[0])*R_weight
+            R = np.diag(R_vec)
 
             #Calculate K
             K = cov_p@comb_H.T@np.linalg.inv(comb_H@cov_p@comb_H.T + R)
@@ -218,7 +225,7 @@ def run_simulation(args):
             # Assign Posterior Covariance
             cov_hist[trial,i,:,:] = cov_m
 
-            filter_position[trial,i,:] = np.array([x_m[0::6], x_m[1::6], x_m[2::6]]).transpose().reshape(-1)
+            filter_position[trial,i,:] = np.array([x_m[0::state_dim], x_m[1::state_dim], x_m[2::state_dim]]).transpose().reshape(-1)
             pos_error[trial,i,:] = filter_position[trial,i,:] - comb_curr_pos
 
             # Sanity check that Cov - FIM is positive definite (Should always be true)
@@ -243,15 +250,19 @@ def run_simulation(args):
         
         sats_copy = copy.deepcopy(sats) # Reset the satellites to initial condition for the next trial
 
-    # Average FIM and covariance history
+    # Average history of relevant variables
     fim = np.mean(fim, axis=0)
     cov_hist = np.mean(cov_hist,axis=0)
+    pos_error = np.mean(pos_error, axis=0)
+
 
     # With the given covariance matrix over all time steps, we can calculate the trace of the covariance matrix
     # We divide this by the number of satellites to get satellite-normalize trace of the covariance matrix
+    # Also calculate the total positional error normalized to the number of satellites
     cov_trace = np.zeros((N))
     for i in range(N):
         cov_trace[i] = np.trace(cov_hist[i,:,:])/n_sats
+        # pos_error[i,:] = pos_error[i,:]/n_sats
 
     # Invert FIM to get crb
     crb = np.zeros_like(fim)
@@ -265,6 +276,11 @@ def run_simulation(args):
 
     np.save(f'data/{n_sats}_cov_trace.npy', cov_trace)
     np.save(f'data/{n_sats}_crb_trace.npy', crb_trace)
+
+    # Plotting of error
+    all_sat_position_error(pos_error, n_sats)
+
+    # pos_err_sat1 = pos_error[:, 0:3]
 
     # Plotting
 
@@ -301,7 +317,8 @@ if __name__ == "__main__":
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
     parser.add_argument('--N', type=int, default=100, help='Number of timesteps')
-    parser.add_argument('--R_weight', type=float, default=10e-5, help='Measurement noise weight')
+    parser.add_argument('--R_weight_range', type=float, default=10e-5, help='Noise weight for ranging measurements')
+    parser.add_argument('--R_weight_bearing', type=float, default=10e-5, help='Noise weight for bearing measurements')
     parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
     parser.add_argument('--ignore_earth', action="store_true", default=False, help='Ignore the Earth from blocking measurements. Only applies to range measurements. \
                         Bearing measurements always consider the earth.')
