@@ -26,6 +26,8 @@ def generate_satellites_yaml(filename: str, n_sats: int):
         omega_dot = random.uniform(1.0, 360.0)
         omega = random.uniform(0.0, 180.0)
         M = random.uniform(0.0, 170.0)
+        R_weight_range = random.uniform(9e-6, 9e-5)
+        R_weight_bearing = random.uniform(0.1, 1)
 
 
         new_satellite = {
@@ -42,6 +44,8 @@ def generate_satellites_yaml(filename: str, n_sats: int):
                 "omega": float(f"{omega:.4g}"),
                 "M": float(f"{M:.4g}")
             },
+            "R_weight_range": float(f"{R_weight_range:.4g}"),
+            "R_weight_bearing": float(f"{R_weight_bearing:.4g}"),
             "camera_exists": 1,
             "camera_fov": 60.0,
             "verbose": 0,

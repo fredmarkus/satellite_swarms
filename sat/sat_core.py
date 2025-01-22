@@ -56,8 +56,8 @@ class satellite:
         self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
-        self.R_weight_range = R_weight_range
-        self.R_weight_bearing = R_weight_bearing
+        self.R_weight_range = float(R_weight_range)
+        self.R_weight_bearing = float(R_weight_bearing)
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
         self.camera_exists = camera_exists
@@ -185,8 +185,6 @@ class satellite:
         # FOV is about 60 degrees 
         # ASSUMPTION: The satellite is flying at an altitude of around 550km consistently
         # Otherwise we need a separate way to determine the altitude of the satellite 
-        # First check if the landmark is blocked by earth. 
-        # If it is not check if the landmark is within the field of view of the camera
         
         theta_l = jnp.rad2deg(jnp.arccos(jnp.dot(r_earth,landmark_pos)/(jnp.linalg.norm(r_earth)*jnp.linalg.norm(landmark_pos))))
         

@@ -20,8 +20,8 @@ def run_simulation(args):
     N = args.N
     dt = 1/args.f #Hz
     n_sats = args.n_sats
-    R_weight_range = args.R_weight_range
-    R_weight_bearing = args.R_weight_bearing
+    # R_weight_range = args.R_weight_range
+    # R_weight_bearing = args.R_weight_bearing
     state_dim = args.state_dim
     
     #MC Parameters
@@ -63,8 +63,8 @@ def run_simulation(args):
             sat_config["N"] = N
             sat_config["landmarks"] = landmark_objects
             sat_config["n_sats"] = n_sats
-            sat_config["R_weight_range"] = R_weight_range
-            sat_config["R_weight_bearing"] = R_weight_bearing
+            # sat_config["R_weight_range"] = R_weight_range
+            # sat_config["R_weight_bearing"] = R_weight_bearing
             sat_config["bearing_dim"] = bearing_dim
             sat_config["verbose"] = args.verbose
             sat_config["ignore_earth"] = args.ignore_earth
@@ -317,8 +317,6 @@ if __name__ == "__main__":
     #General Parameters
     parser = argparse.ArgumentParser(description='Nonlinear Recursive Monte Carlo Simulation')
     parser.add_argument('--N', type=int, default=100, help='Number of timesteps')
-    parser.add_argument('--R_weight_range', type=float, default=10e-5, help='Noise weight for ranging measurements')
-    parser.add_argument('--R_weight_bearing', type=float, default=10e-5, help='Noise weight for bearing measurements')
     parser.add_argument('--f', type=float, default=1, help='Frequency of the simulation')
     parser.add_argument('--ignore_earth', action="store_true", default=False, help='Ignore the Earth from blocking measurements. Only applies to range measurements. \
                         Bearing measurements always consider the earth.')
