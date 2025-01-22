@@ -11,7 +11,7 @@ import numpy as np
 import pykep as pk
 import yaml
 
-from landmark import landmark, latlon2ecef
+from landmarks.landmark import landmark, latlon2ecef
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization
 from traj_solver import trajSolver

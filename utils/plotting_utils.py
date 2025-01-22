@@ -95,7 +95,7 @@ def plot_all_sat_crb_trace():
     linestyles = ["-", "--", "-.", ":"] 
     colors = ['red', 'blue', 'green', 'orange', 'purple', 'black', 'yellow', 'pink', 'brown', 'cyan']
 
-    directory_path = "data/"
+    directory_path = "data/trace/"
 
     plt.figure()
     for file_name in os.listdir(directory_path):

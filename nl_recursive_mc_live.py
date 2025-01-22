@@ -15,10 +15,9 @@ import time
 from collections import deque
 
 from utils.math_utils import R_X, R_Z
-from landmark import landmark
+from landmarks.landmark import landmark, latlon2ecef
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization, state_transition
-from landmark import latlon2ecef
 
 
 #General Parameters

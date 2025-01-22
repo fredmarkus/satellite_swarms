@@ -8,7 +8,8 @@ from scipy.linalg import block_diag
 from tqdm import tqdm
 import yaml
 
-from landmark import landmark, latlon2ecef
+from landmarks.landmark import landmark, latlon2ecef
+from log import store_sat_instance
 from sat.sat_core import satellite
 from sat.sat_dynamics import rk4_discretization, state_transition
 from utils.plotting_utils import plot_all_sat_crb_trace, all_sat_position_error
@@ -272,15 +273,20 @@ def run_simulation(args):
         crb_trace[i] = np.trace(crb[i,:,:])/n_sats
 
     if not os.path.exists("data"):
-        os.makedirs("data")
+        os.makedirs("data/pos_error")
+        os.makedirs("data/trace")
+        os.makedirs("data/sat_instance")
 
-    np.save(f'data/{n_sats}_cov-trace.npy', cov_trace)
-    np.save(f'data/{n_sats}_crb-trace.npy', crb_trace)
+    np.save(f'data/trace/{n_sats}_cov-trace.npy', cov_trace)
+    np.save(f'data/trace/{n_sats}_crb-trace.npy', crb_trace)
 
+    for i in range(n_sats):
+        np.save(f'data/pos_error/pos_error_sat_{i+1}',pos_error[:,i*3:(i+1)*3])
+        store_sat_instance(sats[i], f"data/sat_instance/sat_{i+1}.json")
+
+    
     # Plotting of error
     all_sat_position_error(pos_error, n_sats)
-
-    # pos_err_sat1 = pos_error[:, 0:3]
 
     # Plotting
 
@@ -301,7 +307,7 @@ if __name__ == "__main__":
     ### Landmark Initialization ###
     # Import csv data for the lanldmarks
     landmarks = []
-    with open('landmark_coordinates.csv', newline='',) as csvfile:
+    with open('landmarks/landmark_coordinates.csv', newline='',) as csvfile:
         reader = csv.reader(csvfile, delimiter=',',)
         for row in reader:
             landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
