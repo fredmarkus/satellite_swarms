@@ -69,15 +69,20 @@ class satellite:
         # Initialize the measurement vector with noise
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=int(self.dim/2))
-        x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise) # Normalize the noise vector
-        self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) # Add the noise to the initial state vector
+        # Normalize the noise vector
+        x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise)
+        # Add the noise to the initial state vector
+        self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) 
 
         self.x_p = self.x_m
-        self.cov_p = self.cov_m # Initialize the prior covariance the same as the measurement covariance
+        # Initialize the prior covariance the same as the measurement covariance
+        self.cov_p = self.cov_m
 
-        self.curr_pos = self.x_0[0:3] #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
-        self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1))) # Provides the position of the other satellites for all N timesteps
+        #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
+        self.curr_pos = self.x_0[0:3]
 
+        # Provide the position of the other satellites for all N timesteps
+        self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1)))
         self.curr_visible_landmarks = []
         self.HEIGHT = 550
 
@@ -110,8 +115,7 @@ class satellite:
         jac = jax.jacobian(self.h_landmark)(x)
         return jac
 
-
-    def h_inter_range(self, timestep, j, x): # This function calculates the range measurement between the satellite and another satellite
+    def h_inter_range(self, timestep, j, x):
         sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
         if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:

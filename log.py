@@ -1,5 +1,5 @@
-import json
 import numpy as np
+import yaml
 
 def store_sat_instance(sat_instance, filename):
     with open (filename, 'w') as file:
@@ -17,4 +17,4 @@ def store_sat_instance(sat_instance, filename):
                 if isinstance(sat_dict[elem], np.ndarray):
                     sat_dict[elem] = sat_dict[elem].tolist()
 
-            json.dump(sat_dict, file, indent=4)
+            yaml.dump(sat_dict, file, indent=4)

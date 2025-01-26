@@ -33,10 +33,10 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
     def N(a,b,lat):
         return a**2 / np.sqrt(a**2 * np.cos(lat)**2 + b**2 * np.sin(lat)**2)
     
-    for landmark in landmarks:
-        lat_deg = float(landmark[1])
-        lon_deg = float(landmark[2])
-        h = float(landmark[3])
+    for mark in landmarks:
+        lat_deg = float(mark[1])
+        lon_deg = float(mark[2])
+        h = float(mark[3])
 
         # Convert degrees to radians
         lat_rad = np.deg2rad(lat_deg)
@@ -47,7 +47,7 @@ def latlon2ecef(landmarks: list) -> np.ndarray:
         Y = (N_val + h) * np.cos(lat_rad) * np.sin(lon_rad)
         Z = (N_val * (1 - e_sq) + h) * np.sin(lat_rad)
 
-        ecef.append([landmark[0], X, Y, Z])
+        ecef.append([mark[0], X, Y, Z])
 
     
     return np.array(ecef)
