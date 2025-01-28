@@ -28,7 +28,7 @@ from utils.plotting_utils import plot_all_sat_crb_trace
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
 
-def run_simulation(args):
+def sim_setup(args):
     """
     Run a Monte Carlo simulation for satellite formation flying.
     Calculate the Fisher Information Matrix (FIM) and Cramer-Rao Bound (CRB).
@@ -320,9 +320,9 @@ if __name__ == "__main__":
     if args.run_all:
         for i in range(1, args.n_sats + 1):
             args.n_sats = i
-            run_simulation(args)
+            sim_setup(args)
     else:
-        run_simulation(args)
+        sim_setup(args)
 
     plot_all_sat_crb_trace()
     plt.show()
