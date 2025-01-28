@@ -6,8 +6,8 @@ import numpy as np
 import yaml
 
 from landmark import landmark, latlon2ecef
-from sat.sat_core import satellite
-from sat.sat_dynamics import rk4_discretization, state_transition
+from sat.core import satellite
+from sat.dynamics import rk4_discretization, state_transition
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 
 if __name__ == "__main__":

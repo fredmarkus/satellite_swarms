@@ -1,23 +1,30 @@
 """
-Combined state Monte Carlo simulation for multiple satellites 
+Simulation setup for satellite formation flying using recursive filter.
 """
 
 import argparse
 import copy
-import csv
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import block_diag
 from tqdm import tqdm
-import yaml
 
-from landmarks.landmark import landmark, latlon2ecef
-from log import store_sat_instance
-from sat.sat_core import satellite
-from sat.sat_dynamics import rk4_discretization, state_transition
-from utils.plotting_utils import plot_all_sat_crb_trace, all_sat_position_error
+from analysis import fpost_sanity_check
+from analysis import get_cov_trace
+from analysis import get_crb_trace
+from sat.construct_jacobian import combined_state_H
+from sat.dynamics import exchange_trajectories
+from sat.dynamics import rk4_discretization
+from sat.dynamics import state_transition
+from sat.dynamics import simulate_nominal_trajectories
+from utils.config_utils import load_sat_config
+from utils.data_io_utils import import_landmarks
+from utils.data_io_utils import store_all_data
+from utils.data_io_utils import setup_data_dir
+from utils.plotting_utils import all_sat_position_error
+from utils.plotting_utils import plot_all_sat_crb_trace
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
 
@@ -47,22 +54,16 @@ def run_simulation(args):
         None
 
     This function performs the following steps:
-        1. Load satellite configuration from a YAML file.
-        2. Initialize satellite instances.
-        3. Generate synthetic trajectories for the satellites.
-        4. Perform Monte Carlo simulations to calculate the FIM and CRB.
-        5. Save the results to files.
-        6. Plot the results.
+        1. Load satellite configuration from a YAML file and create satellite instances.
+        2. Generate nominal trajectories for the satellites.
+        3. Perform Monte Carlo simulations using recursive filter to generate FIM.
+        4. Save and plot the results
     """
 
     N = args.N
     dt = 1 / args.f  # Hz
     n_sats = args.n_sats
-    # R_weight_range = args.R_weight_range
-    # R_weight_bearing = args.R_weight_bearing
     state_dim = args.state_dim
-
-    # MC Parameters
     num_trials = args.num_trials
 
     bearing_dim = len(args.landmark_objects) * 3
@@ -70,70 +71,21 @@ def run_simulation(args):
 
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites"
     # by OU Yangwei, ZHANG Hongbo, XING Jianjun page 6
-
     Q = np.diag(np.array([10e-6, 10e-6, 10e-6, 10e-12, 10e-12, 10e-12]))
 
     # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
     # np.random.seed(42)        #Set seed for reproducibility
 
     ### Satellite Initialization ###
-    if args.random_yaml:
-        with open("config/sat_autogen.yaml", "r") as file:
-            config = yaml.safe_load(file)
+    sats = load_sat_config(args=args, bearing_dim=bearing_dim)
 
-    else:
-        with open("config/config.yaml", "r") as file:
-            config = yaml.safe_load(file)
+    # Generate ground-truth synthetic data for the next N timesteps
+    x_traj = simulate_nominal_trajectories(N, dt, sats, state_dim)
 
-            if len(config["satellites"]) < n_sats:
-                raise ValueError(
-                    """Number of satellites specified is greater than the number of satellites in the yaml file. 
-                                 Add --random_yaml flag to generate random satellite configuration for the provided number of 
-                                 satellites or create custom satellites in config/config.yaml"""
-                )
+    # Transfer the positions of the other satellites for each satellite at N+1 timesteps
+    sats = exchange_trajectories(sats, x_traj)
 
-    sats = []
-
-    for i, sat_config in enumerate(config["satellites"]):
-
-        # Only create the number of satellites specified in the argument. The rest of the yaml file is ignored
-        if i < n_sats:
-            # Overwrite the following yaml file parameters with values provided in this script
-            sat_config["N"] = N
-            sat_config["landmarks"] = args.landmark_objects
-            sat_config["n_sats"] = n_sats
-            sat_config["bearing_dim"] = bearing_dim
-            sat_config["verbose"] = args.verbose
-            sat_config["ignore_earth"] = args.ignore_earth
-
-            satellite_inst = satellite(**sat_config)
-            sats.append(satellite_inst)
-
-        else:
-            break
-
-    # Generate synthetic for N+1 timesteps so that we can calculate the FIM for N timesteps;
-    x_traj = np.zeros(
-        (N + 1, state_dim, n_sats)
-    )  # Discretized trajectory of satellite states over time period
-    # This loop is deterministic as we are always doing the same discretization so we do not need to regenerate the trajectories.
-    for sat in sats:
-        x = sat.x_0
-        for i in range(N + 1):
-            x_traj[i, :, sat.id] = x
-            x = rk4_discretization(x, dt)
-
-    # Get the positions of the other satellites for each satellite at all N+1 timesteps
-    for sat in sats:
-        sat_i = 0  # iterator variable
-        for other_sat in sats:
-            if sat.id != other_sat.id:
-                sat.other_sats_pos[:, :, sat_i] = x_traj[
-                    :, 0:3, other_sat.id
-                ]  # Transfer all N+1 3D positions of the other satellites from x_traj
-                sat_i += 1
-
-    ## Calculate FIM directly in recursive fashion.
+    ## Calculate FIM in recursive fashion.
     fim = np.zeros((num_trials, N, state_dim * n_sats, state_dim * n_sats))
     cov_hist = np.zeros((num_trials, N, state_dim * n_sats, state_dim * n_sats))
 
@@ -178,9 +130,10 @@ def run_simulation(args):
                 sat.x_p = rk4_discretization(sat.x_m, dt)
 
                 # Assign the state transition matrix to the correct block in the A matrix
-                A[k * state_dim : (k + 1) * state_dim, k * state_dim : (k + 1) * state_dim] = (
-                    state_transition(sat.x_m)
-                )
+                A[
+                    k * state_dim : (k + 1) * state_dim,
+                    k * state_dim : (k + 1) * state_dim,
+                ] = state_transition(sat.x_m)
 
                 # Update the combined state vector and underlying groundtruth
                 x_p[k * state_dim : (k + 1) * state_dim] = sat.x_p
@@ -211,31 +164,11 @@ def run_simulation(args):
                 # Re-initialize the measurement matrices for each satellite with the correct dimensions
                 # based on the number of visible landmarks
                 y_m = np.zeros((meas_dim))
-                H = np.zeros((meas_dim, state_dim * n_sats))
                 h = np.zeros((meas_dim))
                 R_vec = np.append(R_vec, [sat.R_weight_bearing] * sat.bearing_dim)
 
-                # Calculate H
-                H[0 : sat.bearing_dim, k * state_dim : (k + 1) * state_dim] = sat.H_landmark(
-                    sat.x_p
-                )
-
-                other_sat_id = 0
-                for j in range(sat.bearing_dim, meas_dim):
-                    # other_sat_id = j-sat.bearing_dim + 1
-                    range_dist = sat.H_inter_range(i + 1, j, sat.x_p)
-                    H[j, sat.id * state_dim : (sat.id + 1) * state_dim] = range_dist
-
-                    if other_sat_id == sat.id:
-                        other_sat_id += 1
-                        H[j, other_sat_id * state_dim : (other_sat_id + 1) * state_dim] = (
-                            -range_dist
-                        )
-                    else:
-                        H[j, other_sat_id * state_dim : (other_sat_id + 1) * state_dim] = (
-                            -range_dist
-                        )
-                        other_sat_id += 1
+                # Calculate Jacobian matrix H for combined state (still just one satellite H)
+                H = combined_state_H(sat, meas_dim, state_dim, i, k)
 
                 # Calculate h
                 h[0 : sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
@@ -270,7 +203,9 @@ def run_simulation(args):
                 sat.x_m = x_m[sat.id * state_dim : (sat.id + 1) * state_dim]
 
             # FIM Calculation
-            f_post = f_prior + comb_H.T @ np.linalg.inv(R) @ comb_H + np.linalg.inv(Q_block)
+            f_post = (
+                f_prior + comb_H.T @ np.linalg.inv(R) @ comb_H + np.linalg.inv(Q_block)
+            )
 
             # Assign Posterior Covariance
             cov_hist[trial, i, :, :] = cov_m
@@ -282,25 +217,8 @@ def run_simulation(args):
             )
             pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
 
-            # Sanity check that Cov - FIM is positive definite (Should always be true)
-            if np.linalg.matrix_rank(f_post) == state_dim:
-                if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post)) > 0):
-                    print(
-                        f"Satellite {sat.id} FIM is NOT positive definite. Something went wrong!!!"
-                    )
-
-            # # Check if f_post is invertible
-            if np.linalg.matrix_rank(f_post) != state_dim:
-                if args.verbose:
-                    print(f_post)
-                    print(f"Satellite {sat.id} FIM is not invertible")
-
-            else:
-                eig_val, eig_vec = np.linalg.eig(f_post)
-                if args.verbose:
-                    print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
-                    print("Condition number of FIM: ", np.linalg.cond(f_post))
-                    print("Eigenvectors of FIM: ", eig_vec)
+            # # Sanity check that Cov - FIM is positive definite (Should always be true)
+            fpost_sanity_check(f_post, sat, args.verbose, state_dim)
 
             fim[trial, i, :, :] = f_post
 
@@ -313,34 +231,21 @@ def run_simulation(args):
     cov_hist = np.mean(cov_hist, axis=0)
     pos_error = np.mean(pos_error, axis=0)
 
-    # With the given covariance matrix over all time steps, we can calculate the trace of the covariance matrix
-    # We divide this by the number of satellites to get satellite-normalize trace of the covariance matrix
-    # Also calculate the total positional error normalized to the number of satellites
-    cov_trace = np.zeros((N))
-    for i in range(N):
-        cov_trace[i] = np.trace(cov_hist[i, :, :]) / n_sats
-        # pos_error[i,:] = pos_error[i,:]/n_sats
+    # Calculate Covariance and CRB trace
+    cov_trace = get_cov_trace(N, cov_hist, n_sats)
+    crb_trace = get_crb_trace(N, fim, n_sats)
 
-    # Invert FIM to get crb
-    crb = np.zeros_like(fim)
-    crb_trace = np.zeros((N))
-    for i in range(N):
-        crb[i, :, :] = np.linalg.inv(fim[i, :, :])
-        crb_trace[i] = np.trace(crb[i, :, :]) / n_sats
 
-    if not os.path.exists("data"):
-        os.makedirs("data/pos_error")
-        os.makedirs("data/trace")
-        os.makedirs("data/sat_instance")
+    # Save the results to files
+    store_all_data(
+        n_sats=n_sats,
+        cov_trace=cov_trace,
+        crb_trace=crb_trace,
+        pos_error=pos_error,
+        sats=sats,
+    )
 
-    np.save(f"data/trace/{n_sats}_cov-trace.npy", cov_trace)
-    np.save(f"data/trace/{n_sats}_crb-trace.npy", crb_trace)
-
-    for i in range(n_sats):
-        np.save(f"data/pos_error/pos_error_sat_{i+1}", pos_error[:, i * 3 : (i + 1) * 3])
-        store_sat_instance(sats[i], f"data/sat_instance/sat_{i+1}.yaml")
-
-    # Plotting of error
+    # Plotting of errors
     all_sat_position_error(pos_error, n_sats)
 
     # Plotting
@@ -359,35 +264,21 @@ def run_simulation(args):
 
 if __name__ == "__main__":
 
+    #Setup data directory
+    setup_data_dir()
+    
     ### Landmark Initialization ###
-    # Import csv data for the lanldmarks
-    landmarks = []
-    with open("landmarks/landmark_coordinates.csv", newline="", encoding="utf-8") as csvfile:
-        reader = csv.reader(
-            csvfile,
-            delimiter=",",
-        )
-        for row in reader:
-            landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
-
-    landmarks_ecef = latlon2ecef(landmarks)
-    landmark_objects = []
-
-    # Initialize the landmark objects with their correct name and the ECEF coordinates
-    for landmark_obj in landmarks_ecef:
-        landmark_objects.append(
-            landmark(
-                x=float(landmark_obj[1]),
-                y=float(landmark_obj[2]),
-                z=float(landmark_obj[3]),
-                name=(landmark_obj[0]),
-            )
-        )
+    landmark_objects = import_landmarks()
+    
 
     # General Parameters
-    parser = argparse.ArgumentParser(description="Nonlinear Recursive Monte Carlo Simulation")
+    parser = argparse.ArgumentParser(
+        description="Nonlinear Recursive Monte Carlo Simulation"
+    )
     parser.add_argument("--N", type=int, default=100, help="Number of timesteps")
-    parser.add_argument("--f", type=float, default=1, help="Frequency of the simulation")
+    parser.add_argument(
+        "--f", type=float, default=1, help="Frequency of the simulation"
+    )
     parser.add_argument(
         "--ignore_earth",
         action="store_true",
@@ -395,7 +286,9 @@ if __name__ == "__main__":
         help="Ignore the Earth from blocking measurements. Only applies to range measurements. \
                         Bearing measurements always consider the earth.",
     )
-    parser.add_argument("--num_trials", type=int, default=1, help="Number of Monte Carlo trials")
+    parser.add_argument(
+        "--num_trials", type=int, default=1, help="Number of Monte Carlo trials"
+    )
     parser.add_argument("--n_sats", type=int, default=1, help="Number of satellites")
     parser.add_argument(
         "--random_yaml",
@@ -409,11 +302,13 @@ if __name__ == "__main__":
         default=False,
         help="Run simulations for all number of satellites from 1 to n_sats",
     )
-    parser.add_argument("--state_dim", type=int, default=6, help="Dimension of the state vector")
-    parser.add_argument("--verbose", action="store_true", default=False, help="Print information")
+    parser.add_argument(
+        "--state_dim", type=int, default=6, help="Dimension of the state vector"
+    )
+    parser.add_argument(
+        "--verbose", action="store_true", default=False, help="Print information"
+    )
     args = parser.parse_args()
-
-    os.system("rm -r ./data")
 
     if args.random_yaml:
         if not os.path.exists("config"):
