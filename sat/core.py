@@ -127,6 +127,18 @@ class satellite:
     def H_inter_range(self, i, j, x):
         jac = jax.jacobian(self.h_inter_range, argnums=2)(i, j, x)
         return jac
+    
+    def h_sat_bearing(self, timestep, j, x):
+        sat_id = j-self.bearing_dim # j is the bearing measurement index starting from 3
+        sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
+        if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:
+            return (x[0:3] - sat_pos)/jnp.linalg.norm(x[0:3] - sat_pos)
+        else:
+            return jnp.zeros((3))
+        
+    def H_sat_bearing(self, i, j, x):
+        jac = jax.jacobian(self.h_sat_bearing, argnums=2)(i, j, x)
+        return jac
 
 
     def measure_z_range(self, sats: list) -> np.ndarray:
@@ -158,6 +170,22 @@ class satellite:
                 z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
 
         return z_l
+    
+    def measure_z_bearing(self, sats: list) -> np.ndarray:
+        z = np.array([])
+        for sat in sats:
+            if sat.id != self.id:
+                if self.is_visible_ellipse(self.curr_pos, sat.curr_pos) or self.ignore_earth:
+                    if self.verbose:
+                        print(f"Satellite {self.id} can see satellite {sat.id}")
+                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=(3))
+                    d = (self.curr_pos - sat.curr_pos)/np.linalg.norm(self.curr_pos - sat.curr_pos) + noise
+                    z = np.append(z,d,axis=0)
+                
+                else:
+                    z = np.append(z,np.zeros((3)),axis=0)
+
+        return z
 
 
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:

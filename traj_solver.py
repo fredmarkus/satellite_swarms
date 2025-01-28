@@ -2,7 +2,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from sat.sat_dynamics import rk4_discretization
+from sat.dynamics import rk4_discretization
 
 class trajSolver:
     def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim, dt, is_initial):

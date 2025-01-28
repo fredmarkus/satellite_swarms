@@ -8,8 +8,8 @@ import jax
 import jax.numpy as jnp
 # from functools import partial
 
-from sat.sat_core import satellite
-from sat.sat_dynamics import rk4_discretization, state_transition
+from sat.core import satellite
+from sat.dynamics import rk4_discretization, state_transition
 from landmark import latlon2ecef, landmark
 from traj_solver import trajSolver
 
