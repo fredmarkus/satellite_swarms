@@ -99,6 +99,9 @@ class satellite:
                 self.curr_visible_landmarks.append(landmark)
 
         return self.curr_visible_landmarks
+    
+    def visible_sats_list(self):
+        pass
 
 
     def h_landmark(self, x):
@@ -119,7 +122,8 @@ class satellite:
         sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
         sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
         if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:
-            return jnp.linalg.norm(x[0:3] - sat_pos) 
+            return jnp.linalg.norm(x[0:3] - sat_pos)
+              
         else:
             return jnp.linalg.norm(0)
 
@@ -129,8 +133,8 @@ class satellite:
         return jac
     
     def h_sat_bearing(self, timestep, j, x):
-        sat_id = j-self.bearing_dim # j is the bearing measurement index starting from 3
-        sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
+        # sat_id = j-self.bearing_dim # j is the bearing measurement index starting from 3
+        sat_pos = self.other_sats_pos[timestep,:,j] # sat_id here refers to the first other satellite. Indexing starts again from 0
         if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:
             return (x[0:3] - sat_pos)/jnp.linalg.norm(x[0:3] - sat_pos)
         else:
@@ -189,7 +193,16 @@ class satellite:
 
 
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
-        # Check if the earth is in the way of the own position and the other position
+        """
+        Check if the earth is in the way of the own position and the other position
+
+        Args:
+            own_pos (np.ndarray): The position of the satellite
+            other_pos (np.ndarray): The position of the other satellite
+
+        Returns:
+            bool: True if the earth is not in the way, False otherwise
+        """
         d = other_pos - own_pos
         A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
         B = 2*(own_pos[0]*d[0] + own_pos[1]*d[1])/(EQ_RADIUS**2) + 2*own_pos[2]*d[2]/(POLAR_RADIUS**2)

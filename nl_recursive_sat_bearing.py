@@ -14,6 +14,7 @@ from tqdm import tqdm
 from analysis import fpost_sanity_check
 from analysis import get_cov_trace
 from analysis import get_crb_trace
+from sat.construct_jacobian import combined_state_H_bearing_range
 from sat.construct_jacobian import combined_state_H_landmark_range
 from sat.dynamics import exchange_trajectories
 from sat.dynamics import rk4_discretization
@@ -155,28 +156,44 @@ def run_simulation(args):
 
             for sat in sats_copy:
 
+                # Take measurements first.
+                y_m_bearing = sat.measure_z_bearing(sats_copy).tolist()
+
+                sat.bearing_dim = int(len(y_m_bearing))
+
+                y_m_range = sat.measure_z_range(sats_copy).tolist()
+
+                y_m_bearing.extend(y_m_range)
+                y_m = y_m_bearing
+
+                meas_dim = int(len(y_m))
+
+                # y_m.extend(sat.measure_z_range(sats_copy).tolist())
+
+
                 # Get visible landmarks
-                visible_landmarks = sat.visible_landmarks_list(sat.x_p)
-                sat.bearing_dim = len(visible_landmarks) * 3
-                meas_dim = n_sats - 1 + sat.bearing_dim
+                # visible_landmarks = sat.visible_landmarks_list(sat.x_p)
+                # sat.bearing_dim = len(visible_landmarks) * 3
+                # meas_dim = n_sats - 1 + sat.bearing_dim
 
                 # Re-initialize the measurement matrices for each satellite with the correct dimensions
                 # based on the number of visible landmarks
-                y_m = np.zeros((meas_dim))
-                h = np.zeros((meas_dim))
+                # y_m = np.zeros((meas_dim))
+                # h = np.zeros((meas_dim))
                 R_vec = np.append(R_vec, [sat.R_weight_bearing] * sat.bearing_dim)
 
-                # Calculate Jacobian matrix H for combined state (still just one satellite H)
-                H = combined_state_H_landmark_range(sat, meas_dim, state_dim, i)
 
                 # Calculate h
-                h[0 : sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-                for j in range(sat.bearing_dim, meas_dim):
-                    h[j] = sat.h_inter_range(i + 1, j, sat.x_p[0:3])
-                    R_vec = np.append(R_vec, sat.R_weight_range)
+                h = []
+                for j in range(0,int(sat.bearing_dim/3)):
+                    h.extend(sat.h_sat_bearing(i + 1, j, sat.x_p[0:3]).tolist())
 
-                y_m[0 : sat.bearing_dim] = sat.measure_z_landmark()
-                y_m[sat.bearing_dim : meas_dim] = sat.measure_z_range(sats_copy)
+                for j in range(sat.bearing_dim, meas_dim):
+                    h.append(sat.h_inter_range(i + 1, j, sat.x_p[0:3]).item())
+                    R_vec = np.append(R_vec, sat.R_weight_range)
+                
+                # Calculate Jacobian matrix H for combined state (still just one satellite H)
+                H = combined_state_H_bearing_range(sat, meas_dim, state_dim, i)
 
                 # Append vectors and matrices to combined form
                 comb_y_m = np.append(comb_y_m, y_m, axis=0)
@@ -185,6 +202,7 @@ def run_simulation(args):
                     comb_H = H
                 else:
                     comb_H = np.append(comb_H, H, axis=0)
+
 
             # Create R based on the number of measurements of all satellites
             R = np.diag(R_vec)
