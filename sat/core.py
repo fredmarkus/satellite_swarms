@@ -1,9 +1,11 @@
+from typing import List
+
 import jax.numpy as jnp
 import jax
 import math
 import numpy as np
 
-
+from landmarks.landmark import landmark
 from utils.math_utils import R_X, R_Z
 
 # Constants
@@ -67,6 +69,7 @@ class satellite:
         self.ignore_earth = ignore_earth
         
         # Initialize the measurement vector with noise
+        np.random.seed(123)
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
         x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=int(self.dim/2))
         # Normalize the noise vector
@@ -86,19 +89,24 @@ class satellite:
         self.curr_visible_landmarks = []
         self.HEIGHT = 550
 
-
-    def visible_landmarks_list(self, x) -> int:
-        norm_vec_sat = x[0:3]/jnp.linalg.norm(x[0:3])
-        r_earth = x[0:3] - self.HEIGHT*norm_vec_sat
-        theta_t = (self.HEIGHT/jnp.linalg.norm(r_earth))*(self.camera_fov/2)
-
+    ### Visibility functions for landmarks and satellites ###
+    def visible_landmarks_list(self) -> List[landmark]:
+        # TODO: can be made faster by inferring that landmarks are more likely to be visible if they were visible in the previous timestep
         self.curr_visible_landmarks = []
-
         for landmark in self.landmarks:
-            if self.landmark_visible(landmark.pos, r_earth, theta_t):
+            if self.is_visible_ellipse(self.curr_pos, landmark.pos): # TODO: Consider ignoring the earth or not the speed up of ignoring is crazy.
                 self.curr_visible_landmarks.append(landmark)
 
         return self.curr_visible_landmarks
+    
+
+    def visible_sats_list(self, sats: List["satellite"]) -> List["satellite"]:
+        self.curr_visible_sats = []
+        for sat in sats:
+            if sat.id != self.id:
+                if self.ignore_earth or self.is_visible_ellipse(self.curr_pos, sat.curr_pos):
+                    self.curr_visible_sats.append(sat)
+        return self.curr_visible_sats
 
 
     def h_landmark(self, x):
@@ -114,20 +122,21 @@ class satellite:
         # Use jax to autodifferentiate
         jac = jax.jacobian(self.h_landmark)(x)
         return jac
+    
 
-    def h_inter_range(self, timestep, j, x):
-        sat_id = j-self.bearing_dim # j is the range measurement index starting from 3
-        sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
-        if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:
-            return jnp.linalg.norm(x[0:3] - sat_pos) 
-        else:
-            return jnp.linalg.norm(0)
+    def h_inter_range(self, x):
+        h = jnp.zeros((len(self.curr_visible_sats)))
+        for i, sat in enumerate(self.curr_visible_sats):
+            h= h.at[i].set(jnp.linalg.norm(x[0:3] - sat.curr_pos))
+        
+        return h
 
 
-    def H_inter_range(self, i, j, x):
-        jac = jax.jacobian(self.h_inter_range, argnums=2)(i, j, x)
+    def H_inter_range(self, x):
+        jac = jax.jacobian(self.h_inter_range, argnums=0)(x)
         return jac
     
+    # TODO: Simplify the bearing functions
     def h_sat_bearing(self, timestep, j, x):
         sat_id = j-self.bearing_dim # j is the bearing measurement index starting from 3
         sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
@@ -142,26 +151,20 @@ class satellite:
 
 
     def measure_z_range(self, sats: list) -> np.ndarray:
-        z = np.empty((0))
-        for sat in sats:
-            if sat.id != self.id:
-                if self.is_visible_ellipse(self.curr_pos, sat.curr_pos) or self.ignore_earth: # If the earth is not in the way, we can measure the range. Or if earth is ignored
-                    if self.verbose:
-                        print(f"Satellite {self.id} can see satellite {sat.id}")
-                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-                    d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
-                    z = np.append(z,d,axis=0)
+        z = np.array([])
+        for sat in self.curr_visible_sats:
+            if self.verbose:
+                print(f"Satellite {self.id} can see satellite {sat.id}")
+            noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
+            d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
+            z = np.append(z,d,axis=0)
 
-                else: # If the earth is in the way , we set the value to nan so it does not feature in the objective function
-                    z = np.append(z,np.array([0]),axis=0)
         return z
     
 
     def measure_z_landmark(self) -> np.ndarray:
         z_l = np.zeros((len(self.curr_visible_landmarks)*3))
-
         if self.camera_exists:
-
             for i, landmark in enumerate(self.curr_visible_landmarks):
                 if self.verbose:
                     print(f"Satellite {self.id} can see landmark {landmark.name} visible")
@@ -209,18 +212,18 @@ class satellite:
             return False
         
         return True
-    
 
-    def landmark_visible(self, landmark_pos, r_earth, theta_t) -> bool:
-        # Check if a landmark can be seen from the current position of the satellite when taking a picture
-        # Assuming that the camera is pointing straight down
-        # FOV is about 60 degrees 
-        # ASSUMPTION: The satellite is flying at an altitude of around 550km consistently
-        # Otherwise we need a separate way to determine the altitude of the satellite 
+    ## SIMPLIFIED INTERCEPTOR FOR ROUND EARTH ASSUMPTION ##
+    # def landmark_visible(self, landmark_pos, r_earth, theta_t) -> bool:
+    #     # Check if a landmark can be seen from the current position of the satellite when taking a picture
+    #     # Assuming that the camera is pointing straight down
+    #     # FOV is about 60 degrees 
+    #     # ASSUMPTION: The satellite is flying at an altitude of around 550km consistently
+    #     # Otherwise we need a separate way to determine the altitude of the satellite 
         
-        theta_l = jnp.rad2deg(jnp.arccos(jnp.dot(r_earth,landmark_pos)/(jnp.linalg.norm(r_earth)*jnp.linalg.norm(landmark_pos))))
+    #     theta_l = jnp.rad2deg(jnp.arccos(jnp.dot(r_earth,landmark_pos)/(jnp.linalg.norm(r_earth)*jnp.linalg.norm(landmark_pos))))
         
-        if theta_l < theta_t:
-            return True
-        else:
-            return False
+    #     if theta_l < theta_t:
+    #         return True
+    #     else:
+    #         return False

@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import block_diag
 from tqdm import tqdm
+import yaml
 
 from analysis import fpost_sanity_check
 from analysis import get_cov_trace
@@ -124,15 +125,14 @@ def run_simulation(args):
         for i in tqdm(range(N), desc="Timesteps"):
 
             for k, sat in enumerate(sats_copy):
-                sat.curr_pos = x_traj[
-                    i + 1, 0:3, sat.id
-                ]  # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
+                sat.curr_pos = x_traj[i + 1, 0:3, sat.id]  
+
+                # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
                 sat.x_p = rk4_discretization(sat.x_m, dt)
 
                 # Assign the state transition matrix to the correct block in the A matrix
-                A[
-                    k * state_dim : (k + 1) * state_dim,
-                    k * state_dim : (k + 1) * state_dim,
+                A[k * state_dim : (k + 1) * state_dim,
+                  k * state_dim : (k + 1) * state_dim,
                 ] = state_transition(sat.x_m)
 
                 # Update the combined state vector and underlying groundtruth
@@ -154,35 +154,37 @@ def run_simulation(args):
 
             R_vec = np.array([])  # Combined measurement noise vector
 
-            for k, sat in enumerate(sats_copy):
+            for sat in sats_copy:
 
                 # Get visible landmarks
-                visible_landmarks = sat.visible_landmarks_list(sat.x_p)
+                visible_landmarks = sat.visible_landmarks_list()
+                visible_sats = sat.visible_sats_list(sats_copy)
+
                 sat.bearing_dim = len(visible_landmarks) * 3
-                meas_dim = n_sats - 1 + sat.bearing_dim
+                meas_dim = len(visible_sats) + sat.bearing_dim
 
                 # Re-initialize the measurement matrices for each satellite with the correct dimensions
                 # based on the number of visible landmarks
                 y_m = np.zeros((meas_dim))
                 h = np.zeros((meas_dim))
                 R_vec = np.append(R_vec, [sat.R_weight_bearing] * sat.bearing_dim)
+                R_vec = np.append(R_vec, [sat.R_weight_range] * (meas_dim - sat.bearing_dim))
 
                 # Calculate Jacobian matrix H for combined state (still just one satellite H)
-                H = combined_state_H(sat, meas_dim, state_dim, i, k)
+                H = combined_state_H(sat, meas_dim, state_dim)
 
                 # Calculate h
                 h[0 : sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-                for j in range(sat.bearing_dim, meas_dim):
-                    h[j] = sat.h_inter_range(i + 1, j, sat.x_p[0:3])
-                    R_vec = np.append(R_vec, sat.R_weight_range)
+                h[sat.bearing_dim : meas_dim] = sat.h_inter_range(sat.x_p[0:3])
 
+                # TODO: Change these all to lists to speed up appending
                 y_m[0 : sat.bearing_dim] = sat.measure_z_landmark()
                 y_m[sat.bearing_dim : meas_dim] = sat.measure_z_range(sats_copy)
 
                 # Append vectors and matrices to combined form
                 comb_y_m = np.append(comb_y_m, y_m, axis=0)
                 comb_h = np.append(comb_h, h, axis=0)
-                if k == 0:
+                if sat.id == 0:
                     comb_H = H
                 else:
                     comb_H = np.append(comb_H, H, axis=0)
@@ -216,6 +218,7 @@ def run_simulation(args):
                 .reshape(-1)
             )
             pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
+            # print(pos_error[trial, i, 0])
 
             # # Sanity check that Cov - FIM is positive definite (Should always be true)
             fpost_sanity_check(f_post, sat, args.verbose, state_dim)
@@ -316,6 +319,18 @@ if __name__ == "__main__":
         generate_satellites_yaml(filename="config/sat_autogen.yaml", n_sats=args.n_sats)
 
     args.landmark_objects = landmark_objects
+
+    # Check if random_yaml not set that the number of satellites specified is less than or equal to the number of satellites in the yaml config file
+    if not args.random_yaml:
+        with open("config/config.yaml", "r") as file:
+            config = yaml.safe_load(file)
+
+            if len(config["satellites"]) < args.n_sats:
+                raise ValueError(
+                    """Number of satellites specified is greater than the number of satellites in the yaml file. 
+                    Add --random_yaml flag to generate random satellite configuration for the provided number of 
+                    satellites or create custom satellites in config/config.yaml"""
+                )
 
     if args.run_all:
         for i in range(1, args.n_sats + 1):
