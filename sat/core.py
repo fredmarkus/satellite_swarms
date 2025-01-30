@@ -22,9 +22,9 @@ class satellite:
                  vel_cov_init: float, 
                  robot_id: int, 
                  dim: int, 
-                 bearing_dim: int,
                  R_weight_range: float,
-                 R_weight_bearing: float, 
+                 R_weight_land_bearing: float, 
+                 R_weight_sat_bearing: float,
                  N: int, 
                  n_sats: int, 
                  landmarks: object,
@@ -59,19 +59,23 @@ class satellite:
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
         self.R_weight_range = float(R_weight_range)
-        self.R_weight_bearing = float(R_weight_bearing)
+        self.R_weight_land_bearing = float(R_weight_land_bearing)
+        self.R_weight_sat_bearing = float(R_weight_sat_bearing)
         self.n_sats = n_sats # Number of satellites
         self.landmarks = landmarks
         self.camera_exists = camera_exists
         self.camera_fov = camera_fov
-        self.bearing_dim = bearing_dim
         self.verbose = verbose
         self.ignore_earth = ignore_earth
         
+        self.land_bearing_dim = 0
+        self.sat_bearing_dim = 0
+        self.range_dim = 0
+
         # Initialize the measurement vector with noise
         np.random.seed(123)
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=int(self.dim/2))
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_land_bearing),size=int(self.dim/2))
         # Normalize the noise vector
         x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise)
         # Add the noise to the initial state vector
@@ -90,6 +94,29 @@ class satellite:
         self.HEIGHT = 550
 
     ### Visibility functions for landmarks and satellites ###
+
+    def is_visible_ellipse(self, own_pos, other_pos) -> bool:
+        # Check if the earth is in the way of the own position and the other position
+        d = other_pos - own_pos
+        A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
+        B = 2*(own_pos[0]*d[0] + own_pos[1]*d[1])/(EQ_RADIUS**2) + 2*own_pos[2]*d[2]/(POLAR_RADIUS**2)
+        C = (own_pos[0]**2 + own_pos[1]**2)/(EQ_RADIUS**2) + (own_pos[2]**2)/(POLAR_RADIUS**2)
+        
+        # Calculate the discriminant
+        discriminant = B**2 - 4*A*(C-1)
+        if discriminant < 0:
+            # Solution does not intersect the earth as no real solutions exist
+            return True
+        
+        # Discriminant is positive, calculate the solutions
+        solution1 = (-B + jnp.sqrt(discriminant))/(2*A)
+        solution2 = (-B - jnp.sqrt(discriminant))/(2*A)
+        if ((solution1 > 0 or solution2 > 0) and (solution1 < 1 or solution2 < 1)):
+            #One of the solutions is positive and less than 1, the earth is in the way
+            return False
+        
+        return True
+
     def visible_landmarks_list(self) -> List[landmark]:
         # TODO: can be made faster by inferring that landmarks are more likely to be visible if they were visible in the previous timestep
         self.curr_visible_landmarks = []
@@ -119,7 +146,6 @@ class satellite:
         return h
 
     def H_landmark(self, x):
-        # Use jax to autodifferentiate
         jac = jax.jacobian(self.h_landmark)(x)
         return jac
     
@@ -133,24 +159,23 @@ class satellite:
 
 
     def H_inter_range(self, x):
-        jac = jax.jacobian(self.h_inter_range, argnums=0)(x)
+        jac = jax.jacobian(self.h_inter_range)(x)
         return jac
     
-    # TODO: Simplify the bearing functions
-    def h_sat_bearing(self, timestep, j, x):
-        sat_id = j-self.bearing_dim # j is the bearing measurement index starting from 3
-        sat_pos = self.other_sats_pos[timestep,:,sat_id] # sat_id here refers to the first other satellite. Indexing starts again from 0
-        if self.is_visible_ellipse(x[0:3], sat_pos) or self.ignore_earth:
-            return (x[0:3] - sat_pos)/jnp.linalg.norm(x[0:3] - sat_pos)
-        else:
-            return jnp.zeros((3))
+    def h_sat_bearing(self, x):
+        h = jnp.zeros((len(self.curr_visible_sats)*3))
+        for i, sat in enumerate(self.curr_visible_sats):
+            h = h.at[i*3:i*3+3].set((x[0:3] - sat.curr_pos)/jnp.linalg.norm(x[0:3] - sat.curr_pos))
+
+        return h
         
-    def H_sat_bearing(self, i, j, x):
-        jac = jax.jacobian(self.h_sat_bearing, argnums=2)(i, j, x)
+    def H_sat_bearing(self, x):
+        jac = jax.jacobian(self.h_sat_bearing)(x)
         return jac
 
+    ### Measurement functions for landmarks and satellites ###
 
-    def measure_z_range(self, sats: list) -> np.ndarray:
+    def measure_z_range(self) -> np.ndarray:
         z = np.array([])
         for sat in self.curr_visible_sats:
             if self.verbose:
@@ -168,50 +193,21 @@ class satellite:
             for i, landmark in enumerate(self.curr_visible_landmarks):
                 if self.verbose:
                     print(f"Satellite {self.id} can see landmark {landmark.name} visible")
-                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=(int(self.dim/2)))
+                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_land_bearing),size=(int(self.dim/2)))
                 vec = self.curr_pos - landmark.pos + noise
                 z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
 
         return z_l
     
-    def measure_z_bearing(self, sats: list) -> np.ndarray:
+    def measure_z_sat_bearing(self) -> np.ndarray:
         z = np.array([])
-        for sat in sats:
-            if sat.id != self.id:
-                if self.is_visible_ellipse(self.curr_pos, sat.curr_pos) or self.ignore_earth:
-                    if self.verbose:
-                        print(f"Satellite {self.id} can see satellite {sat.id}")
-                    noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_bearing),size=(3))
-                    d = (self.curr_pos - sat.curr_pos)/np.linalg.norm(self.curr_pos - sat.curr_pos) + noise
-                    z = np.append(z,d,axis=0)
-                
-                else:
-                    z = np.append(z,np.zeros((3)),axis=0)
-
+        for sat in self.curr_visible_sats:
+            if self.verbose:
+                print(f"Satellite {self.id} can see satellite {sat.id}")
+            noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_sat_bearing),size=(3))
+            d = (self.curr_pos - sat.curr_pos)/np.linalg.norm(self.curr_pos - sat.curr_pos) + noise
+            z = np.append(z,d,axis=0)
         return z
-
-
-    def is_visible_ellipse(self, own_pos, other_pos) -> bool:
-        # Check if the earth is in the way of the own position and the other position
-        d = other_pos - own_pos
-        A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
-        B = 2*(own_pos[0]*d[0] + own_pos[1]*d[1])/(EQ_RADIUS**2) + 2*own_pos[2]*d[2]/(POLAR_RADIUS**2)
-        C = (own_pos[0]**2 + own_pos[1]**2)/(EQ_RADIUS**2) + (own_pos[2]**2)/(POLAR_RADIUS**2)
-        
-        # Calculate the discriminant
-        discriminant = B**2 - 4*A*(C-1)
-        if discriminant < 0:
-            # Solution does not intersect the earth as no real solutions exist
-            return True
-        
-        # Discriminant is positive, calculate the solutions
-        solution1 = (-B + jnp.sqrt(discriminant))/(2*A)
-        solution2 = (-B - jnp.sqrt(discriminant))/(2*A)
-        if ((solution1 > 0 or solution2 > 0) and (solution1 < 1 or solution2 < 1)):
-            #One of the solutions is positive and less than 1, the earth is in the way
-            return False
-        
-        return True
 
     ## SIMPLIFIED INTERCEPTOR FOR ROUND EARTH ASSUMPTION ##
     # def landmark_visible(self, landmark_pos, r_earth, theta_t) -> bool:

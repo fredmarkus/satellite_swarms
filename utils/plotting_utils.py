@@ -114,14 +114,14 @@ def plot_all_sat_crb_trace():
     plt.legend()
 
 
-def all_sat_position_error(pos_error,n_sats):
+def all_sat_position_error(pos_error,n_sats,meas_type):
     linestyles = ["-", "--", "-.", ":"] 
     plt.figure()
     for i in range(n_sats):
         error = np.abs(np.sum(pos_error[:,i*3:(i+1)*3],axis=1))
 
         plt.plot(error, label=f'position error sat {i}', color='red',linestyle=linestyles[i % len(linestyles)])
-        plt.title(f'Absolute Position Error for {n_sats} satellites')
+        plt.title(f'Absolute Position Error for {n_sats} satellites for measurement type {meas_type}')
         plt.xlabel('Timestep')
         plt.legend()
 

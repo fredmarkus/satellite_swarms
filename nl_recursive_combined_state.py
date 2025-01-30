@@ -15,7 +15,7 @@ import yaml
 from analysis import fpost_sanity_check
 from analysis import get_cov_trace
 from analysis import get_crb_trace
-from sat.construct_jacobian import combined_state_H
+from sat.construct_jacobian import combined_H
 from sat.dynamics import exchange_trajectories
 from sat.dynamics import rk4_discretization
 from sat.dynamics import state_transition
@@ -47,6 +47,7 @@ def run_simulation(args):
             - random_yaml (bool): Flag to indicate whether to use a random YAML configuration.
             - verbose (bool): Flag to enable verbose output.
             - ignore_earth (bool): Flag to ignore Earth in the simulation.
+            - measurement_type (list): List of measurement types to be used.
 
     Raises:
         ValueError: If the number of satellites specified is greater than the number of satellites in the YAML file.
@@ -66,19 +67,18 @@ def run_simulation(args):
     n_sats = args.n_sats
     state_dim = args.state_dim
     num_trials = args.num_trials
-
-    bearing_dim = len(args.landmark_objects) * 3
-    meas_dim = n_sats - 1 + bearing_dim
+    meas_type = args.measurement_type
 
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites"
     # by OU Yangwei, ZHANG Hongbo, XING Jianjun page 6
     Q = np.diag(np.array([10e-6, 10e-6, 10e-6, 10e-12, 10e-12, 10e-12]))
-
-    # Do not seed in order for Monte-Carlo simulations to actually produce different outputs!
-    # np.random.seed(42)        #Set seed for reproducibility
+    Q_block = block_diag(*[Q for _ in range(n_sats)])
+    ind_cov = np.diag(
+        np.array([1, 1, 1, 0.1, 0.1, 0.1])
+    )  # Individual covariance matrix for each satellite
 
     ### Satellite Initialization ###
-    sats = load_sat_config(args=args, bearing_dim=bearing_dim)
+    sats = load_sat_config(args=args)
 
     # Generate ground-truth synthetic data for the next N timesteps
     x_traj = simulate_nominal_trajectories(N, dt, sats, state_dim)
@@ -94,12 +94,6 @@ def run_simulation(args):
 
     filter_position = np.zeros((num_trials, N, 3 * n_sats))
     pos_error = np.zeros((num_trials, N, 3 * n_sats))
-
-    Q = np.diag(np.array([10e-6, 10e-6, 10e-6, 10e-12, 10e-12, 10e-12]))
-    Q_block = block_diag(*[Q for _ in range(n_sats)])
-    ind_cov = np.diag(
-        np.array([1, 1, 1, 0.1, 0.1, 0.1])
-    )  # Individual covariance matrix for each satellite
 
     for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):
 
@@ -160,26 +154,40 @@ def run_simulation(args):
                 visible_landmarks = sat.visible_landmarks_list()
                 visible_sats = sat.visible_sats_list(sats_copy)
 
-                sat.bearing_dim = len(visible_landmarks) * 3
-                meas_dim = len(visible_sats) + sat.bearing_dim
+                if "land" in meas_type:
+                    sat.land_bearing_dim = len(visible_landmarks) * 3
+
+                if "sat_bearing" in meas_type:
+                    sat.sat_bearing_dim = len(visible_sats) * 3
+
+                if "range" in meas_type:
+                    sat.range_dim = len(visible_sats)
+                
+                meas_dim = sat.land_bearing_dim + sat.sat_bearing_dim + sat.range_dim
 
                 # Re-initialize the measurement matrices for each satellite with the correct dimensions
                 # based on the number of visible landmarks
                 y_m = np.zeros((meas_dim))
                 h = np.zeros((meas_dim))
-                R_vec = np.append(R_vec, [sat.R_weight_bearing] * sat.bearing_dim)
-                R_vec = np.append(R_vec, [sat.R_weight_range] * (meas_dim - sat.bearing_dim))
 
                 # Calculate Jacobian matrix H for combined state (still just one satellite H)
-                H = combined_state_H(sat, meas_dim, state_dim)
+                H = combined_H(sat, meas_dim, state_dim, meas_type)
 
-                # Calculate h
-                h[0 : sat.bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-                h[sat.bearing_dim : meas_dim] = sat.h_inter_range(sat.x_p[0:3])
+                # TODO: Change these all to lists to speed up appending. Can then also reshuffle statements to combined with the ifs aboveto only check if statements once.
+                if "land" in meas_type:
+                    h[0 : sat.land_bearing_dim] = sat.h_landmark(sat.x_p[0:3])
+                    y_m[0 : sat.land_bearing_dim] = sat.measure_z_landmark()
+                    R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
 
-                # TODO: Change these all to lists to speed up appending
-                y_m[0 : sat.bearing_dim] = sat.measure_z_landmark()
-                y_m[sat.bearing_dim : meas_dim] = sat.measure_z_range(sats_copy)
+                if "sat_bearing" in meas_type:
+                    h[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.h_sat_bearing(sat.x_p[0:3])
+                    y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.measure_z_sat_bearing()
+                    R_vec = np.append(R_vec, [sat.R_weight_sat_bearing] * sat.sat_bearing_dim)
+
+                if "range" in meas_type:
+                    h[sat.land_bearing_dim + sat.sat_bearing_dim : meas_dim] = sat.h_inter_range(sat.x_p[0:3])
+                    y_m[sat.land_bearing_dim + sat.sat_bearing_dim : meas_dim] = sat.measure_z_range()
+                    R_vec = np.append(R_vec, [sat.R_weight_range] * sat.range_dim)
 
                 # Append vectors and matrices to combined form
                 comb_y_m = np.append(comb_y_m, y_m, axis=0)
@@ -192,8 +200,10 @@ def run_simulation(args):
             # Create R based on the number of measurements of all satellites
             R = np.diag(R_vec)
 
-            # Calculate K
+            # Kalman Gain
             K = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + R)
+
+            # Posterior Update
             x_m = x_p + K @ (comb_y_m - comb_h)
             cov_m = (np.eye(state_dim * n_sats) - K @ comb_H) @ cov_p @ (
                 (np.eye(state_dim * n_sats) - K @ comb_H).T
@@ -218,7 +228,6 @@ def run_simulation(args):
                 .reshape(-1)
             )
             pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
-            # print(pos_error[trial, i, 0])
 
             # # Sanity check that Cov - FIM is positive definite (Should always be true)
             fpost_sanity_check(f_post, sat, args.verbose, state_dim)
@@ -249,20 +258,7 @@ def run_simulation(args):
     )
 
     # Plotting of errors
-    all_sat_position_error(pos_error, n_sats)
-
-    # Plotting
-
-    # Plot the trajectory of the satellite
-    # plot_trajectory(x_traj, filter_position, N)
-
-    # Plot the positional error
-    # plot_position_error(pos_error)
-
-    # Plot crb and cov trace
-    # plot_covariance_crb_trace(crb_trace, cov_trace)
-
-    # plt.show()
+    all_sat_position_error(pos_error, n_sats, meas_type)
 
 
 if __name__ == "__main__":
@@ -272,7 +268,6 @@ if __name__ == "__main__":
     
     ### Landmark Initialization ###
     landmark_objects = import_landmarks()
-    
 
     # General Parameters
     parser = argparse.ArgumentParser(
@@ -310,6 +305,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--verbose", action="store_true", default=False, help="Print information"
+    )
+    parser.add_argument(
+        "--measurement_type", nargs="+", help="Type of measurements to be used \
+            Options are 'range', 'land', 'sat_bearing'"
     )
     args = parser.parse_args()
 

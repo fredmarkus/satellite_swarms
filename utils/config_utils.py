@@ -11,7 +11,7 @@ import yaml
 #pylint: disable=import-error
 from sat.core import satellite
 
-def load_sat_config(args: argparse.Namespace, bearing_dim: int) -> List[satellite]:
+def load_sat_config(args: argparse.Namespace) -> List[satellite]:
     """
     Generate a list of satellite configurations based on the provided arguments 
     and YAML configuration files.
@@ -19,7 +19,6 @@ def load_sat_config(args: argparse.Namespace, bearing_dim: int) -> List[satellit
     Args:
         args (argparse.Namespace): Command-line arguments containing satellite 
             configuration parameters.
-        bearing_dim (int): The dimension of the bearing measurements.
 
     Returns:
         List[satellite]: A list of satellite instances configured according to the provided arguments 
@@ -63,7 +62,6 @@ def load_sat_config(args: argparse.Namespace, bearing_dim: int) -> List[satellit
             sat_config["N"] = args.N
             sat_config["landmarks"] = args.landmark_objects
             sat_config["n_sats"] = args.n_sats
-            sat_config["bearing_dim"] = bearing_dim
             sat_config["verbose"] = args.verbose
             sat_config["ignore_earth"] = args.ignore_earth
 

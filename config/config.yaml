@@ -6,7 +6,8 @@ satellites:
     vel_cov_init: 0.1
     dim: 6
     R_weight_range: 1e-5
-    R_weight_bearing: 0.4
+    R_weight_land_bearing: 0.4
+    R_weight_sat_bearing: 0.4
     landmarks: landmark_objects
     orbital_elements: {e: 0.0, a: 6928.0, i: 90.0, omega_dot: 180.0, omega: 0.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -20,7 +21,8 @@ satellites:
     vel_cov_init: 0.1
     dim: 6
     R_weight_range: 1e-5
-    R_weight_bearing: 0.4
+    R_weight_land_bearing: 0.4
+    R_weight_sat_bearing: 0.4
     landmarks: landmark_objects
     orbital_elements: {e: 0.0, a: 6928.0, i: 10.0, omega_dot: 200.0, omega: 30.0, M: 10.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -34,7 +36,8 @@ satellites:
     vel_cov_init: 0.1
     dim: 6
     R_weight_range: 1e-5
-    R_weight_bearing: 0.4
+    R_weight_land_bearing: 0.4
+    R_weight_sat_bearing: 0.4
     landmarks: landmark_objects
     orbital_elements: {e: 0.1, a: 7478.0, i: 85.0, omega_dot: 270.0, omega: 30.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -48,7 +51,8 @@ satellites:
     vel_cov_init: 0.1
     dim: 6
     R_weight_range: 1e-5
-    R_weight_bearing: 0.4
+    R_weight_land_bearing: 0.4
+    R_weight_sat_bearing: 0.4
     landmarks: landmark_objects
     orbital_elements: {e: 0.1, a: 7478.0, i: 105.0, omega_dot: 30.0, omega: 20.0, M: 10.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -62,7 +66,8 @@ satellites:
     vel_cov_init: 0.1
     dim: 6
     R_weight_range: 1e-5
-    R_weight_bearing: 0.4
+    R_weight_land_bearing: 0.4
+    R_weight_sat_bearing: 0.4
     landmarks: landmark_objects
     orbital_elements: {e: 0.1, a: 7478.0, i: 5.0, omega_dot: 25.0, omega: 20.0, M: 25.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
