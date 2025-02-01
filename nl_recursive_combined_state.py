@@ -24,8 +24,10 @@ from utils.config_utils import load_sat_config
 from utils.data_io_utils import import_landmarks
 from utils.data_io_utils import store_all_data
 from utils.data_io_utils import setup_data_dir
+from utils.math_utils import M_Jac
 from utils.plotting_utils import all_sat_position_error
 from utils.plotting_utils import plot_all_sat_crb_trace
+from utils.plotting_utils import plot_trajectory
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
 
@@ -81,6 +83,9 @@ def run_simulation(args):
     sats = load_sat_config(args=args)
 
     # Generate ground-truth synthetic data for the next N timesteps
+    # x_traj = np.zeros(
+    #     (timesteps + 1, state_dim, len(sats))
+    # )
     x_traj = simulate_nominal_trajectories(N, dt, sats, state_dim)
 
     # Transfer the positions of the other satellites for each satellite at N+1 timesteps
@@ -95,7 +100,7 @@ def run_simulation(args):
     filter_position = np.zeros((num_trials, N, 3 * n_sats))
     pos_error = np.zeros((num_trials, N, 3 * n_sats))
 
-    for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):
+    for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):            
 
         f_prior = np.zeros((state_dim * n_sats, state_dim * n_sats))
         f_post = np.zeros((state_dim * n_sats, state_dim * n_sats))
@@ -104,8 +109,8 @@ def run_simulation(args):
         # TODO: Complexify this function to handle different variance weights for different satellites
         cov_m = block_diag(*[ind_cov for _ in range(n_sats)])
         cov_p = block_diag(*[ind_cov for _ in range(n_sats)])
-        x_m = np.zeros((state_dim * n_sats))
-        x_p = np.zeros((state_dim * n_sats))
+        total_x_m = np.zeros((state_dim * n_sats))
+        total_x_p = np.zeros((state_dim * n_sats))
 
         comb_curr_pos = np.zeros((3 * n_sats))
 
@@ -113,15 +118,15 @@ def run_simulation(args):
 
         # Initialize the measurement states using satellites initial measurement state
         for i in range(n_sats):
-            x_m[i * state_dim : (i + 1) * state_dim] = sats[i].x_m
+            total_x_m[i * state_dim : (i + 1) * state_dim] = sats[i].x_m
 
         # Looping for timesteps
         for i in tqdm(range(N), desc="Timesteps"):
 
             for k, sat in enumerate(sats_copy):
+                # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
                 sat.curr_pos = x_traj[i + 1, 0:3, sat.id]  
 
-                # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
                 sat.x_p = rk4_discretization(sat.x_m, dt)
 
                 # Assign the state transition matrix to the correct block in the A matrix
@@ -130,7 +135,7 @@ def run_simulation(args):
                 ] = state_transition(sat.x_m)
 
                 # Update the combined state vector and underlying groundtruth
-                x_p[k * state_dim : (k + 1) * state_dim] = sat.x_p
+                total_x_p[k * state_dim : (k + 1) * state_dim] = sat.x_p
                 comb_curr_pos[k * 3 : (k + 1) * 3] = sat.curr_pos
 
             # FIM Calculations
@@ -147,6 +152,7 @@ def run_simulation(args):
             comb_H = np.array([[]])  # Combined Jacobian matrix
 
             R_vec = np.array([])  # Combined measurement noise vector
+            # M_vec = [] # Combined Jacobian matrix for the process noise
 
             for sat in sats_copy:
 
@@ -175,19 +181,26 @@ def run_simulation(args):
 
                 # TODO: Change these all to lists to speed up appending. Can then also reshuffle statements to combined with the ifs aboveto only check if statements once.
                 if "land" in meas_type:
-                    h[0 : sat.land_bearing_dim] = sat.h_landmark(sat.x_p[0:3])
-                    y_m[0 : sat.land_bearing_dim] = sat.measure_z_landmark()
-                    R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
+                    if sat.land_bearing_dim > 0:
+                        h[0 : sat.land_bearing_dim] = sat.h_landmark(sat.x_p[0:3])
+                        y_m[0 : sat.land_bearing_dim] = sat.measure_z_landmark()
+                        R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
+                        # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
 
                 if "sat_bearing" in meas_type:
-                    h[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.h_sat_bearing(sat.x_p[0:3])
-                    y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.measure_z_sat_bearing()
-                    R_vec = np.append(R_vec, [sat.R_weight_sat_bearing] * sat.sat_bearing_dim)
+                    if sat.sat_bearing_dim > 0:
+                        h[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.h_sat_bearing(sat.x_p[0:3])
+                        y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.measure_z_sat_bearing()
+                        R_vec = np.append(R_vec, [sat.R_weight_sat_bearing] * sat.sat_bearing_dim)
+                        # print(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
+                        # M_vec.append(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
 
                 if "range" in meas_type:
-                    h[sat.land_bearing_dim + sat.sat_bearing_dim : meas_dim] = sat.h_inter_range(sat.x_p[0:3])
-                    y_m[sat.land_bearing_dim + sat.sat_bearing_dim : meas_dim] = sat.measure_z_range()
-                    R_vec = np.append(R_vec, [sat.R_weight_range] * sat.range_dim)
+                    if sat.range_dim > 0:
+                        h[sat.land_bearing_dim + sat.sat_bearing_dim : meas_dim] = sat.h_inter_range(sat.x_p[0:3])
+                        y_m[sat.land_bearing_dim + sat.sat_bearing_dim : meas_dim] = sat.measure_z_range()
+                        R_vec = np.append(R_vec, [sat.R_weight_range] * sat.range_dim)
+                        # M_vec.append(np.eye((sat.range_dim)))
 
                 # Append vectors and matrices to combined form
                 comb_y_m = np.append(comb_y_m, y_m, axis=0)
@@ -199,12 +212,16 @@ def run_simulation(args):
 
             # Create R based on the number of measurements of all satellites
             R = np.diag(R_vec)
+            # M_val = block_diag(*M_vec)
 
-            # Kalman Gain
+            # Kalman Gain TODO: Consider the M matrix to include with the process noise depends on how the noise is modelled. 
+            # K2 = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + M_val @ R @ M_val.T)
             K = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + R)
 
+            # print(K - K2)
+
             # Posterior Update
-            x_m = x_p + K @ (comb_y_m - comb_h)
+            total_x_m = total_x_p + K @ (comb_y_m - comb_h)
             cov_m = (np.eye(state_dim * n_sats) - K @ comb_H) @ cov_p @ (
                 (np.eye(state_dim * n_sats) - K @ comb_H).T
             ) + K @ R @ K.T
@@ -212,7 +229,8 @@ def run_simulation(args):
             # Set sat's x_m so that they can be used for the next prior update x_p state.
             # Individual covariances of sats don't matter for this because we use the full covariances
             for sat in sats_copy:
-                sat.x_m = x_m[sat.id * state_dim : (sat.id + 1) * state_dim]
+                sat.x_m = total_x_m[sat.id * state_dim : (sat.id + 1) * state_dim]
+                # sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
 
             # FIM Calculation
             f_post = (
@@ -223,14 +241,14 @@ def run_simulation(args):
             cov_hist[trial, i, :, :] = cov_m
 
             filter_position[trial, i, :] = (
-                np.array([x_m[0::state_dim], x_m[1::state_dim], x_m[2::state_dim]])
+                np.array([total_x_m[0::state_dim], total_x_m[1::state_dim], total_x_m[2::state_dim]])
                 .transpose()
                 .reshape(-1)
             )
             pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
 
             # # Sanity check that Cov - FIM is positive definite (Should always be true)
-            fpost_sanity_check(f_post, sat, args.verbose, state_dim)
+            fpost_sanity_check(f_post, cov_m, args.verbose, state_dim)
 
             fim[trial, i, :, :] = f_post
 
@@ -259,6 +277,10 @@ def run_simulation(args):
 
     # Plotting of errors
     all_sat_position_error(pos_error, n_sats, meas_type)
+
+    # Plot filter trajectories
+    # plot_trajectory(x_traj[:,:,0], filter_position[0,:,0:3], N)
+
 
 
 if __name__ == "__main__":

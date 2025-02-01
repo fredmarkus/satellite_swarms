@@ -32,7 +32,8 @@ class satellite:
                  camera_exists: bool,
                  camera_fov: float,
                  verbose: bool,
-                 ignore_earth: bool) -> None:
+                 ignore_earth: bool,
+                 meas_type: list) -> None:
         
         # Calculate initial state based on orbital elements placing 
         a = float(orbital_elements["a"])
@@ -75,7 +76,7 @@ class satellite:
         # Initialize the measurement vector with noise
         np.random.seed(123)
         self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_land_bearing),size=int(self.dim/2))
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(10000),size=int(self.dim/2))
         # Normalize the noise vector
         x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise)
         # Add the noise to the initial state vector
@@ -91,6 +92,7 @@ class satellite:
         # Provide the position of the other satellites for all N timesteps
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1)))
         self.curr_visible_landmarks = []
+        self.meas_type = meas_type
         self.HEIGHT = 550
 
     ### Visibility functions for landmarks and satellites ###
@@ -178,9 +180,10 @@ class satellite:
     def measure_z_range(self) -> np.ndarray:
         z = np.array([])
         for sat in self.curr_visible_sats:
-            if self.verbose:
-                print(f"Satellite {self.id} can see satellite {sat.id}")
+            if self.verbose and ("range" in self.meas_type):
+                print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
+
             d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
             z = np.append(z,d,axis=0)
 
@@ -191,22 +194,22 @@ class satellite:
         z_l = np.zeros((len(self.curr_visible_landmarks)*3))
         if self.camera_exists:
             for i, landmark in enumerate(self.curr_visible_landmarks):
-                if self.verbose:
-                    print(f"Satellite {self.id} can see landmark {landmark.name} visible")
+                if self.verbose and ("land" in self.meas_type):
+                    print(f"Satellite {self.id} can see landmark {landmark.name}")
                 noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_land_bearing),size=(int(self.dim/2)))
-                vec = self.curr_pos - landmark.pos + noise
-                z_l[i*3:i*3+3] = vec/np.linalg.norm(vec)
+                vec = self.curr_pos - landmark.pos
+                z_l[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
 
         return z_l
     
     def measure_z_sat_bearing(self) -> np.ndarray:
-        z = np.array([])
-        for sat in self.curr_visible_sats:
-            if self.verbose:
-                print(f"Satellite {self.id} can see satellite {sat.id}")
+        z = np.zeros((len(self.curr_visible_sats)*3))
+        for i, sat in enumerate(self.curr_visible_sats):
+            if self.verbose and ("sat_bearing" in self.meas_type):
+                print(f"Satellite {self.id} can take bearing measurement to satellite {sat.id}")
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_sat_bearing),size=(3))
-            d = (self.curr_pos - sat.curr_pos)/np.linalg.norm(self.curr_pos - sat.curr_pos) + noise
-            z = np.append(z,d,axis=0)
+            vec = self.curr_pos - sat.curr_pos
+            z[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
         return z
 
     ## SIMPLIFIED INTERCEPTOR FOR ROUND EARTH ASSUMPTION ##

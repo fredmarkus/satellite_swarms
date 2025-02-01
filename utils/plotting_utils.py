@@ -32,18 +32,21 @@ def plot_trajectory(x_traj, filter_position, N):
     ax = fig.add_subplot(111, projection='3d')
     time = np.linspace(0, 1, N)  # Normalized time from 0 to 1
     scatter1 = ax.scatter(
-        x_traj[:-1,0,0], 
-        x_traj[:-1,1,0], 
-        x_traj[:-1,2,0],
+        x_traj[:-1,0], 
+        x_traj[:-1,1], 
+        x_traj[:-1,2],
         c=time,
         cmap='viridis',
         label='Trajectory',
         marker='o'
     )
     scatter2 = ax.scatter(
-        np.mean(filter_position, axis=0)[:,0,0], 
-        np.mean(filter_position, axis=0)[:,1,0],
-        np.mean(filter_position, axis=0)[:,2,0], 
+        # np.mean(filter_position, axis=0)[:,:,0],
+        # np.mean(filter_position, axis=0)[:,:,1],
+        # np.mean(filter_position, axis=0)[:,:,2], 
+        filter_position[:,0],
+        filter_position[:,1],
+        filter_position[:,2], 
         c=time,
         cmap='plasma', 
         label='Filtered Position',
@@ -119,8 +122,14 @@ def all_sat_position_error(pos_error,n_sats,meas_type):
     plt.figure()
     for i in range(n_sats):
         error = np.abs(np.sum(pos_error[:,i*3:(i+1)*3],axis=1))
+        error_x = pos_error[:,i*3]
+        error_y = pos_error[:,i*3+1]
+        error_z = pos_error[:,i*3+2]
 
-        plt.plot(error, label=f'position error sat {i}', color='red',linestyle=linestyles[i % len(linestyles)])
+
+        plt.plot(error_x, label=f'position error x sat {i}', color='red',linestyle=linestyles[i % len(linestyles)])
+        plt.plot(error_y, label=f'position error y sat {i}', color='blue',linestyle=linestyles[i % len(linestyles)])
+        plt.plot(error_z, label=f'position error z sat {i}', color='green',linestyle=linestyles[i % len(linestyles)])
         plt.title(f'Absolute Position Error for {n_sats} satellites for measurement type {meas_type}')
         plt.xlabel('Timestep')
         plt.legend()

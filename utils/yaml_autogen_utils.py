@@ -18,17 +18,17 @@ def generate_satellites_yaml(filename: str, n_sats: int):
 
 
         # Generate random parameters for the satellite
-        pos_cov_init = random.uniform(0.8, 1.2)
-        vel_cov_init = random.uniform(0.08, 0.12)
-        e = random.uniform(0.0, 0.2)
-        a = random.uniform(6900.0, 6960.0)
-        inc = random.uniform(1.0, 180.0)
-        omega_dot = random.uniform(1.0, 360.0)
-        omega = random.uniform(0.0, 180.0)
-        M = random.uniform(0.0, 170.0)
-        R_weight_range = random.uniform(9e-6, 9e-5)
-        R_weight_land_bearing = random.uniform(0.1, 1)
-        R_weight_sat_bearing = random.uniform(0.1, 1)
+        pos_cov_init = random.uniform(0.9, 1)
+        vel_cov_init = random.uniform(0.09, 0.11)
+        e = random.uniform(0.0, 0.1)
+        a = random.uniform(6950.0, 6955.0)
+        inc = random.uniform(65.0, 70.0)
+        omega_dot = random.uniform(3.0, 4.0)
+        omega = random.uniform(6.0, 10.0)
+        M = random.uniform(5.0, 6.0)
+        R_weight_range = random.uniform(9e-6, 5e-5)
+        R_weight_land_bearing = random.uniform(0.5, 1)
+        R_weight_sat_bearing = random.uniform(0.5, 1)
 
 
         new_satellite = {

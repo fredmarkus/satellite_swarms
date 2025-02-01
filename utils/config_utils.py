@@ -64,6 +64,7 @@ def load_sat_config(args: argparse.Namespace) -> List[satellite]:
             sat_config["n_sats"] = args.n_sats
             sat_config["verbose"] = args.verbose
             sat_config["ignore_earth"] = args.ignore_earth
+            sat_config["meas_type"] = args.measurement_type
 
             satellite_inst = satellite(**sat_config)
             sats.append(satellite_inst)
