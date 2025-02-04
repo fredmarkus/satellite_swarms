@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-from landmark import landmark, latlon2ecef
+from landmarks.landmark import landmark, latlon2ecef
 from sat.core import satellite
 from sat.dynamics import rk4_discretization, state_transition
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
@@ -15,7 +15,7 @@ if __name__ == "__main__":
     ### Landmark Initialization ###
     # Import csv data for the lanldmarks
     landmarks = []
-    with open('landmark_coordinates.csv', newline='',) as csvfile:
+    with open('landmarks/landmark_coordinates.csv', newline='',) as csvfile:
         reader = csv.reader(csvfile, delimiter=',',)
         for row in reader:
             landmarks.append(np.array([row[0], row[1], row[2], row[3]]))
@@ -62,7 +62,7 @@ if __name__ == "__main__":
     # np.random.seed(42)        #Set seed for reproducibility
 
     ### Satellite Initialization ###
-    with open("config.yaml", "r") as file:
+    with open("config/config.yaml", "r") as file:
         config = yaml.safe_load(file)
 
     sats = []
@@ -75,7 +75,7 @@ if __name__ == "__main__":
             sat_config["N"] = N
             sat_config["landmarks"] = landmark_objects
             sat_config["n_sats"] = n_sats
-            sat_config["R_weight"] = R_weight
+            # sat_config["R_weight"] = R_weight
             sat_config["bearing_dim"] = bearing_dim
             sat_config["verbose"] = verbose
 

@@ -1,5 +1,6 @@
 """
-Satellite dynamics module.
+Functions for implementing orbital position dynamics and its jacobian under just the force of gravity.
+J2 perturbations are not included.
 """
 
 from typing import List
@@ -26,11 +27,6 @@ J2 = 1.08263e-3 # J2 perturbation coefficient
 
 DENSITY = ROH_0*np.exp(-(HEIGHT-H_0)/SCALE_HEIGHT) # kg/km^3 # Density of the atmosphere at the height of the satellite
 
-
-def gravitational_acceleration(r):
-    return (-MU / (jnp.linalg.norm(r)**3)) * r
-
-
 # TODO: Refactor to make this dependent on the satellite object specifically and account for eccentricity of orbit leading to varying density
 # Reason: We assume that all satellites have the same mass and area values which is not necessarily true
 def atmospheric_drag(v):
@@ -54,66 +50,6 @@ def j2_jacobian(r):
     return jac
 
 
-def rk4_discretization(x, dt: float):
-    r = x[0:3]
-    v = x[3:6]
-
-    def dr_dt(v):
-        """Derivative of r with respect to time is velocity v."""
-        return v
-
-    def dv_dt(r, v):
-        """Derivative of v with respect to time is gravitational acceleration."""
-        return gravitational_acceleration(r) + j2_dynamics(r) + atmospheric_drag(v)
-
-    # Calculate k1 for r and v
-    k1_r = dr_dt(v)
-    k1_v = dv_dt(r, v)
-
-    # Calculate k2 for r and v
-    k2_r = dr_dt(v + 0.5 * dt * k1_v)
-    k2_v = dv_dt(r + 0.5 * dt * k1_r, v + 0.5 * dt * k1_v)
-
-    # Calculate k3 for r and v
-    k3_r = dr_dt(v + 0.5 * dt * k2_v)
-    k3_v = dv_dt(r + 0.5 * dt * k2_r, v + 0.5 * dt * k2_v)
-
-    # Calculate k4 for r and v
-    k4_r = dr_dt(v + dt * k3_v)
-    k4_v = dv_dt(r + dt * k3_r, v + dt * k3_v)
-
-    # Combine the k terms to get the next position and velocity
-    r_new = r + (dt / 6) * (k1_r + 2 * k2_r + 2 * k3_r + k4_r)
-    v_new = v + (dt / 6) * (k1_v + 2 * k2_v + 2 * k3_v + k4_v)
-
-    # Return the updated state vector
-    return jnp.concatenate((r_new, v_new))
-
-
-# Numerical solution of the dynamics using Euler's method
-def euler_discretization(x: np.ndarray, dt: float) -> np.ndarray:
-    r = x[0:3]
-    v = x[3:6]
-    r_new = r + v*dt
-    v_new = v + (-MU/(np.linalg.norm(r)**3))*r*dt
-    return np.concatenate((r_new, v_new))
-
-
-def state_transition(x):
-    I = np.eye(3)
-    # Account for j2 dynamics
-    j2_jac = j2_jacobian(x[0:3])
-
-    # Account for gravitational acceleration
-    grav_jac = -MU/(np.linalg.norm(x[0:3])**3)*I + 3*MU*np.outer(x[0:3],x[0:3])/(np.linalg.norm(x[0:3])**5)
-
-    # Account for atmospheric drag
-    drag_jac = -DENSITY*C_D*AREA/(2*MASS)*(np.outer(x[3:6],x[3:6])/np.linalg.norm(x[3:6]) + I*np.linalg.norm(x[3:6]))
-
-    A = np.block([[np.zeros((3,3)), I], [grav_jac+j2_jac, drag_jac]])
-    return A
-
-
 def simulate_nominal_trajectories(timesteps: int, dt: float, sats: List[satellite], state_dim: int) -> np.ndarray:
     """
     Calculate the nominal trajectories of the satellites over a given number of timesteps.
@@ -135,13 +71,13 @@ def simulate_nominal_trajectories(timesteps: int, dt: float, sats: List[satellit
         x = sat.x_0
         for i in range(timesteps + 1):
             x_traj[i, :, sat.id] = x
-            x = rk4_discretization(x, dt)
+            x = f(x, dt)
     return x_traj
 
 
 def exchange_trajectories(sats: List[satellite], x_traj: np.ndarray,) -> List[satellite]:
     """
-    Transfer the positions of the other satellites for each satellite at all timesteps.
+    Transfer the positions of the other satellites for each satellite.
 
     Args:
     sats (List[satellite]): List of satellite objects for which to transfer the positions.
@@ -160,3 +96,104 @@ def exchange_trajectories(sats: List[satellite], x_traj: np.ndarray,) -> List[sa
                 sat_i += 1
 
     return sats
+
+def state_derivative(x: np.ndarray) -> np.ndarray:
+    """
+    The continuous-time state derivative function, \dot{x} = f_c(x), for orbital position dynamics under gravity.
+    J2 perturbations are not included.
+
+    :param x: A numpy array of shape (6,) containing the current state (position and velocity).
+    :return: A numpy array of shape (6,) containing the state derivative.
+    """
+    r = x[:3]
+    v = x[3:]
+    a = -r * MU / (np.linalg.norm(r) ** 3)
+
+    return np.concatenate([v, a])
+
+
+def state_derivative_jac(x: np.ndarray) -> np.ndarray:
+    """
+    The continuous-time state derivative Jacobian function, d(f_c)/dx, for orbital position dynamics under gravity.
+    J2 perturbations are not included.
+
+    :param x: A numpy array of shape (6,) containing the current state (position and velocity).
+    :return: A numpy array of shape (6, 6) containing the state derivative Jacobian.
+    """
+    I = np.eye(3)
+    # Account for j2 dynamics
+    # j2_jac = j2_jacobian(x[0:3])
+
+    r = x[:3]
+    r_norm = np.linalg.norm(r)
+    dv_dr = np.zeros((3, 3))
+    da_dr = (-MU / r_norm ** 3) * np.eye(3) + (3 * MU / r_norm ** 5) * np.outer(r, r)
+    dv_dv = np.eye(3)
+    da_dv = np.zeros((3, 3))
+    return np.block([[dv_dr, dv_dv],
+                     [da_dr, da_dv]])
+
+
+def RK4(x, func, dt):
+    """
+    Computes the state at the next timestep from the current state and the continuous-time state transition function
+    using Runge-Kutta 4th order integration.
+
+    :param x: The current state vector.
+    :param func: The continuous-time state transition function, \dot{x} = f_c(x).
+    :param dt: The amount of time between each time step.
+    :return: The state vector at the next timestep.
+    """
+    k1 = func(x)
+    k2 = func(x + 0.5 * dt * k1)
+    k3 = func(x + 0.5 * dt * k2)
+    k4 = func(x + dt * k3)
+
+    x_next = x + (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
+    return x_next
+
+
+def RK4_jac(x, func, func_jac, dt):
+    """
+    Computes the Jacobian of the RK4-discretized state transition function.
+
+    :param x: The current state vector.
+    :param func: The continuous-time state transition function, \dot{x} = f_c(x).
+    :param func_jac: The continuous-time state transition Jacobian function, d(f_c)/dx.
+    :param dt: The amount of time between each time step.
+    :return: The Jacobian of the RK4-discretized state transition function at the current state vector.
+    """
+    k1 = func(x)
+    k2 = func(x + 0.5 * dt * k1)
+    k3 = func(x + 0.5 * dt * k2)
+
+    k1_jac = func_jac(x)
+    k2_jac = func_jac(x + 0.5 * dt * k1) @ (np.eye(6) + 0.5 * dt * k1_jac)
+    k3_jac = func_jac(x + 0.5 * dt * k2) @ (np.eye(6) + 0.5 * dt * k2_jac)
+    k4_jac = func_jac(x + dt * k3) @ (np.eye(6) + dt * k3_jac)
+
+    return np.eye(6) + (dt / 6) * (k1_jac + 2 * k2_jac + 2 * k3_jac + k4_jac)
+
+
+def f(x: np.ndarray, dt: float) -> np.ndarray:
+    """
+    The discrete-time state transition function, x_{t+1} = f_d(x_t), for orbital position dynamics under gravity.
+    J2 perturbations are not included.
+
+    :param x: A numpy array of shape (6,) containing the current state (position and velocity).
+    :param dt: The amount of time between each time step.
+    :return: A numpy array of shape (6,) containing the next state (position and velocity).
+    """
+    return RK4(x, state_derivative, dt)
+
+
+def f_jac(x: np.ndarray, dt: float) -> np.ndarray:
+    """
+    The discrete-time state transition Jacobian function, d(f_d)/dx, for orbital position dynamics under gravity.
+    J2 perturbations are not included.
+
+    :param x: A numpy array of shape (6,) containing the current state (position and velocity).
+    :param dt: The amount of time between each time step.
+    :return: A numpy array of shape (6, 6) containing the state transition Jacobian.
+    """
+    return RK4_jac(x, state_derivative, state_derivative_jac, dt)

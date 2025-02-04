@@ -6,7 +6,8 @@ import math
 import numpy as np
 
 from landmarks.landmark import landmark
-from utils.math_utils import R_X, R_Z
+from utils.math_utils import R_X
+from utils.math_utils import R_Z
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
@@ -155,7 +156,8 @@ class satellite:
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
         for i, sat in enumerate(self.curr_visible_sats):
-            h= h.at[i].set(jnp.linalg.norm(x[0:3] - sat.curr_pos))
+            norm = jnp.linalg.norm(x[0:3] - sat.x_p[0:3])
+            h= h.at[i].set(norm)
         
         return h
 
@@ -167,7 +169,7 @@ class satellite:
     def h_sat_bearing(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)*3))
         for i, sat in enumerate(self.curr_visible_sats):
-            h = h.at[i*3:i*3+3].set((x[0:3] - sat.curr_pos)/jnp.linalg.norm(x[0:3] - sat.curr_pos))
+            h = h.at[i*3:i*3+3].set((x[0:3] - sat.x_p[0:3])/jnp.linalg.norm(x[0:3] - sat.x_p[0:3]))
 
         return h
         

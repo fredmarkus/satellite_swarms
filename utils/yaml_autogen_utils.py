@@ -22,13 +22,13 @@ def generate_satellites_yaml(filename: str, n_sats: int):
         vel_cov_init = random.uniform(0.09, 0.11)
         e = random.uniform(0.0, 0.1)
         a = random.uniform(6950.0, 6955.0)
-        inc = random.uniform(65.0, 70.0)
-        omega_dot = random.uniform(3.0, 4.0)
+        inc = random.uniform(30.0, 70.0)
+        omega_dot = random.uniform(2.0, 5.0)
         omega = random.uniform(6.0, 10.0)
-        M = random.uniform(5.0, 6.0)
+        M = random.uniform(0.0, 20.0)
         R_weight_range = random.uniform(9e-6, 5e-5)
-        R_weight_land_bearing = random.uniform(0.5, 1)
-        R_weight_sat_bearing = random.uniform(0.5, 1)
+        R_weight_land_bearing = random.uniform(0.3, 0.6)
+        R_weight_sat_bearing = random.uniform(0.3, 0.6)
 
 
         new_satellite = {
