@@ -14,7 +14,7 @@ import yaml
 from landmarks.landmark import landmark, latlon2ecef
 from sat.core import satellite
 from sat.dynamics import rk4_discretization
-from traj_solver import trajSolver
+from traj_solver import trajSolver_v2
 from utils.plotting_utils import plot_covariance_crb, plot_trajectory, plot_position_error
 
 # Constants
@@ -168,7 +168,7 @@ if __name__ == "__main__":
         if non_zero_meas:
 
         ## Initialize the NLP
-            solver = trajSolver(
+            solver = trajSolver_v2(
                 x_traj=x_traj,
                 y_m=y_m,
                 sat=sats[0], # TODO: This is only for one satellite. Initialize for all satellites if necessary
@@ -176,7 +176,6 @@ if __name__ == "__main__":
                 meas_dim=meas_dim, 
                 bearing_dim=bearing_dim, 
                 n_sats=n_sats,
-                MU=MU, 
                 state_dim=state_dim,
                 dt=dt,
                 is_initial=True
