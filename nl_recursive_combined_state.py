@@ -106,6 +106,7 @@ def run_simulation(args):
         cov_m = block_diag(*[ind_cov for _ in range(n_sats)])
         cov_p = block_diag(*[ind_cov for _ in range(n_sats)])
 
+        ### USE SAT 0 AS ANCHOR ###
         # Set the initial covariance of the first satellite to be very small
         # Q_block[0:6,0:6] = 1e-20*np.eye(6)
 
@@ -126,7 +127,8 @@ def run_simulation(args):
 
             for k, sat in enumerate(sats_copy):
                 # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
-                
+
+                ### USE SAT 0 AS ANCHOR ###
                 # if sat.id == 0:
                 #     sat.x_m = x_traj[i, :, 0]
                 #     cov_m[0:6,0:6] = 1e-20*np.eye(6)
@@ -162,6 +164,7 @@ def run_simulation(args):
 
             for sat in sats_copy:
                 
+                ### USE SAT 0 AS ANCHOR ###
                 # Skip the first satellite as we assume it has perfect knowledge
                 # if sat.id == 0:
                 #     continue

@@ -76,12 +76,10 @@ class satellite:
 
         # Initialize the measurement vector with noise
         np.random.seed(123)
-        self.x_m = self.x_0 + np.array([100,100,100,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        # x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(10000),size=int(self.dim/2))
-        # # Normalize the noise vector
-        # x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise)
+        self.x_m = self.x_0 #+ np.array([100,100,100,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(100),size=int(self.dim/2))
         # # Add the noise to the initial state vector
-        # self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) 
+        self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) 
 
         self.x_p = self.x_m
         # Initialize the prior covariance the same as the measurement covariance
