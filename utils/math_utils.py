@@ -36,3 +36,20 @@ def M_Jac(y):
         M.append(lM)
     
     return block_diag(*M)
+
+def vector_to_az_el(vec: np.ndarray) -> tuple:
+    # Assumes vec is [x, y, z] and nonzero
+    if np.linalg.norm(vec) == 0:
+        return 0, 0
+    
+    x, y, z = vec
+    azimuth = np.arctan2(y, x)
+    elevation = np.arctan2(z, np.sqrt(x**2 + y**2))
+    return azimuth, elevation
+
+def az_el_to_vector(az: float, el: float) -> np.ndarray:
+    # Assumes azimuth and elevation are in radians
+    y = np.cos(el[0]) * np.sin(az[0])
+    x = np.cos(el[0]) * np.cos(az[0])
+    z = np.sin(el[0])
+    return np.array([x, y, z])

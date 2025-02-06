@@ -8,6 +8,8 @@ import numpy as np
 from landmarks.landmark import landmark
 from utils.math_utils import R_X
 from utils.math_utils import R_Z
+from utils.math_utils import az_el_to_vector
+from utils.math_utils import vector_to_az_el
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
@@ -191,9 +193,13 @@ class satellite:
             for i, landmark in enumerate(self.curr_visible_landmarks):
                 if self.verbose and ("land" in self.meas_type):
                     print(f"Satellite {self.id} can see landmark {landmark.name}")
-                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_land_bearing),size=(int(self.dim/2)))
                 vec = landmark.pos - self.curr_pos
-                z_l[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
+                vec = vec/np.linalg.norm(vec)
+                az, el = vector_to_az_el(vec)
+                az = az + np.random.normal(loc=0,scale=math.sqrt(0.001),size=1)
+                el = el + np.random.normal(loc=0,scale=math.sqrt(0.001),size=1)
+                vec = az_el_to_vector(az, el)
+                z_l[i*3:i*3+3] = vec
 
         return z_l
     
@@ -203,9 +209,14 @@ class satellite:
             for i, sat in enumerate(self.curr_visible_sats):
                 if self.verbose and ("sat_bearing" in self.meas_type):
                     print(f"Satellite {self.id} can take bearing measurement to satellite {sat.id}")
-                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_sat_bearing),size=(int(self.dim/2)))
                 vec = self.curr_pos - sat.curr_pos
-                z[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
+                vec = vec/np.linalg.norm(vec)
+                az, el = vector_to_az_el(vec)
+                az = az + np.random.normal(loc=0,scale=math.sqrt(0.001),size=1)
+                el = el + np.random.normal(loc=0,scale=math.sqrt(0.001),size=1)
+                vec = az_el_to_vector(az, el)
+                z[i*3:i*3+3] = vec
+
         return z
 
     ## SIMPLIFIED INTERCEPTOR FOR ROUND EARTH ASSUMPTION ##

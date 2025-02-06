@@ -27,8 +27,8 @@ def generate_satellites_yaml(filename: str, n_sats: int):
         omega = random.uniform(6.0, 10.0)
         M = random.uniform(0.0, 20.0)
         R_weight_range = random.uniform(9e-6, 5e-5)
-        R_weight_land_bearing = random.uniform(0.1, 0.5)
-        R_weight_sat_bearing = random.uniform(0.1, 0.5)
+        R_weight_land_bearing = random.uniform(0.001, 0.002)
+        R_weight_sat_bearing = random.uniform(0.001, 0.002)
 
 
         new_satellite = {
