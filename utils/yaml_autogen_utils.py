@@ -19,7 +19,7 @@ def generate_satellites_yaml(filename: str, n_sats: int):
 
         # Generate random parameters for the satellite
         pos_cov_init = random.uniform(0.9, 1)
-        vel_cov_init = random.uniform(0.09, 0.11)
+        vel_cov_init = random.uniform(0.009, 0.01)
         e = random.uniform(0.0, 0.1)
         a = random.uniform(6950.0, 6955.0)
         inc = random.uniform(30.0, 70.0)

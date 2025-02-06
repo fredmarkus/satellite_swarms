@@ -2,12 +2,12 @@
 
 satellites:
   - robot_id: 0
-    pos_cov_init: 1
-    vel_cov_init: 1
+    pos_cov_init: 10
+    vel_cov_init: 1e-4
     dim: 6
     R_weight_range: 0.001
     R_weight_land_bearing: 0.001
-    R_weight_sat_bearing: 0.4
+    R_weight_sat_bearing: 0.001
     landmarks: landmark_objects
     orbital_elements: {e: 0.0, a: 6928.0, i: 90.0, omega_dot: 0.0, omega: 0.0, M: 0.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -17,12 +17,12 @@ satellites:
 
 
   - robot_id: 1
-    pos_cov_init: 1
-    vel_cov_init: 1
+    pos_cov_init: 10
+    vel_cov_init: 1e-4
     dim: 6
     R_weight_range: 0.001
     R_weight_land_bearing: 0.001
-    R_weight_sat_bearing: 0.4
+    R_weight_sat_bearing: 0.001
     landmarks: landmark_objects
     orbital_elements: {e: 0.0, a: 6928.0, i: 10.0, omega_dot: 2.0, omega: 0.0, M: 3.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -32,12 +32,12 @@ satellites:
 
 
   - robot_id: 2
-    pos_cov_init: 1
-    vel_cov_init: 1
+    pos_cov_init: 10
+    vel_cov_init: 1e-4
     dim: 6
     R_weight_range: 0.001
     R_weight_land_bearing: 0.001
-    R_weight_sat_bearing: 0.4
+    R_weight_sat_bearing: 0.001
     landmarks: landmark_objects
     orbital_elements: {e: 0.0, a: 6928.0, i: 110.0, omega_dot: 3.0, omega: 0.0, M: 5.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -47,12 +47,12 @@ satellites:
 
 
   - robot_id: 3
-    pos_cov_init: 1
-    vel_cov_init: 1
+    pos_cov_init: 10
+    vel_cov_init: 1e-4
     dim: 6
     R_weight_range: 0.001
     R_weight_land_bearing: 0.001
-    R_weight_sat_bearing: 0.4
+    R_weight_sat_bearing: 0.001
     landmarks: landmark_objects
     orbital_elements: {e: 0.0, a: 6928.0, i: 5.0, omega_dot: 6.0, omega: 2.0, M: 10.0} # [e, a, i, Omega, omega, M]
     camera_exists: True
@@ -62,12 +62,12 @@ satellites:
 
 
   - robot_id: 4
-    pos_cov_init: 1
-    vel_cov_init: 1
+    pos_cov_init: 10
+    vel_cov_init: 1e-4
     dim: 6
     R_weight_range: 0.001
     R_weight_land_bearing: 0.001
-    R_weight_sat_bearing: 0.4
+    R_weight_sat_bearing: 0.001
     landmarks: landmark_objects
     orbital_elements: {e: 0.1, a: 7478.0, i: 5.0, omega_dot: 25.0, omega: 20.0, M: 25.0} # [e, a, i, Omega, omega, M]
     camera_exists: True

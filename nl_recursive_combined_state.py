@@ -76,7 +76,7 @@ def run_simulation(args):
     Q = np.diag(np.array([1e-9, 1e-9, 1e-9, 1e-12, 1e-12, 1e-12]))
     Q_block = block_diag(*[Q for _ in range(n_sats)])
     ind_cov = np.diag(
-        np.array([1, 1, 1, 1, 1, 1])
+        np.array([10, 10, 10, 1e-4, 1e-4, 1e-4])
     )  # Individual covariance matrix for each satellite
 
     ### Satellite Initialization ###
@@ -192,26 +192,23 @@ def run_simulation(args):
                     # Calculate Jacobian matrix H for combined state (still just one satellite H)
                     H = combined_H(sat, meas_dim, state_dim, meas_type)
                     
-                    if "land" in meas_type:
-                        if sat.land_bearing_dim > 0:
-                            h.extend(sat.h_landmark(sat.x_p[0:3]).tolist())
-                            y_m.extend(sat.measure_z_landmark().tolist())
-                            R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
-                            # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
+                    if "land" in meas_type and sat.land_bearing_dim > 0:
+                        h.extend(sat.h_landmark(sat.x_p[0:3]).tolist())
+                        y_m.extend(sat.measure_z_landmark().tolist())
+                        R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
+                        # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
 
-                    if "sat_bearing" in meas_type:
-                        if sat.sat_bearing_dim > 0:
-                            h[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.h_sat_bearing(sat.x_p[0:3])
-                            y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.measure_z_sat_bearing()
-                            R_vec = np.append(R_vec, [sat.R_weight_sat_bearing] * sat.sat_bearing_dim)
-                            # M_vec.append(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
+                    if "sat_bearing" in meas_type and sat.sat_bearing_dim > 0:
+                        h[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.h_sat_bearing(sat.x_p[0:3])
+                        y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.measure_z_sat_bearing()
+                        R_vec = np.append(R_vec, [sat.R_weight_sat_bearing] * sat.sat_bearing_dim)
+                        # M_vec.append(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
 
-                    if "range" in meas_type:
-                        if sat.range_dim > 0:
-                            h.extend(sat.h_inter_range(sat.x_p[0:3]).tolist())
-                            y_m.extend(sat.measure_z_range().tolist())
-                            R_vec = np.append(R_vec, [sat.R_weight_range] * sat.range_dim)
-                            # M_vec.append(np.eye((sat.range_dim)))
+                    if "range" in meas_type and sat.range_dim > 0:
+                        h.extend(sat.h_inter_range(sat.x_p[0:3]).tolist())
+                        y_m.extend(sat.measure_z_range().tolist())
+                        R_vec = np.append(R_vec, [  sat.R_weight_range] * sat.range_dim)
+                        # M_vec.append(np.eye((sat.range_dim)))
 
                     # Append vectors and matrices to combined form
                     comb_y_m.extend(y_m)
@@ -235,7 +232,7 @@ def run_simulation(args):
             # Kalman Gain TODO: Consider the M matrix to include with the process noise depends on how the noise is modelled. 
             # K2 = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + M_val @ R @ M_val.T)
 
-            if np.any(np.abs(comb_H) > 1e-12):
+            if np.any(np.abs(comb_H) > 1e-18):
                 K = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + R)
                 tmp = comb_y_m - comb_h
                 
