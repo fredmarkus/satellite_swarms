@@ -76,11 +76,9 @@ class satellite:
 
         # Initialize the measurement vector with noise
         np.random.seed(123)
-        self.x_m = self.x_0# + np.array([1,0,0,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
-        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(10000),size=int(self.dim/2))
-        # Normalize the noise vector
-        x_m_init_noise = x_m_init_noise/np.linalg.norm(x_m_init_noise)
-        # Add the noise to the initial state vector
+        self.x_m = self.x_0 #+ np.array([100,100,100,0,0,0]) # Initialize the measurement vector exactly the same as the initial state vector
+        x_m_init_noise = np.random.normal(loc=0,scale=math.sqrt(100),size=int(self.dim/2))
+        # # Add the noise to the initial state vector
         self.x_m = self.x_m + np.append(x_m_init_noise,np.zeros((3,)),axis=0) 
 
         self.x_p = self.x_m
@@ -129,7 +127,6 @@ class satellite:
 
         return self.curr_visible_landmarks
     
-
     def visible_sats_list(self, sats: List["satellite"]) -> List["satellite"]:
         self.curr_visible_sats = []
         for sat in sats:
@@ -138,20 +135,18 @@ class satellite:
                     self.curr_visible_sats.append(sat)
         return self.curr_visible_sats
 
-
     def h_landmark(self, x):
         h = jnp.zeros((len(self.curr_visible_landmarks)*3))
 
         if self.camera_exists:
             for i, landmark in enumerate(self.curr_visible_landmarks):
-                norm = jnp.sqrt((x[0] - landmark.pos[0])**2 + (x[1] - landmark.pos[1])**2 + (x[2] - landmark.pos[2])**2)
-                h = h.at[i*3:i*3+3].set((x[0:3] - landmark.pos)/norm)
+                norm = jnp.linalg.norm(landmark.pos - x[0:3])
+                h = h.at[i*3:i*3+3].set((landmark.pos - x[0:3])/norm)
         return h
 
     def H_landmark(self, x):
         jac = jax.jacobian(self.h_landmark)(x)
         return jac
-    
 
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
@@ -160,7 +155,6 @@ class satellite:
             h= h.at[i].set(norm)
         
         return h
-
 
     def H_inter_range(self, x):
         jac = jax.jacobian(self.h_inter_range)(x)
@@ -180,15 +174,14 @@ class satellite:
     ### Measurement functions for landmarks and satellites ###
 
     def measure_z_range(self) -> np.ndarray:
-        z = np.array([])
-        for sat in self.curr_visible_sats:
+        z = np.zeros((len(self.curr_visible_sats)))
+        for i, sat in enumerate(self.curr_visible_sats):
             if self.verbose and ("range" in self.meas_type):
                 print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
+            
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-
-            d = np.array([np.linalg.norm(self.curr_pos - sat.curr_pos)]) + noise
-            z = np.append(z,d,axis=0)
-
+            z[i] = np.linalg.norm(self.curr_pos - sat.curr_pos) + noise
+            
         return z
     
 
@@ -199,19 +192,20 @@ class satellite:
                 if self.verbose and ("land" in self.meas_type):
                     print(f"Satellite {self.id} can see landmark {landmark.name}")
                 noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_land_bearing),size=(int(self.dim/2)))
-                vec = self.curr_pos - landmark.pos
+                vec = landmark.pos - self.curr_pos
                 z_l[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
 
         return z_l
     
     def measure_z_sat_bearing(self) -> np.ndarray:
         z = np.zeros((len(self.curr_visible_sats)*3))
-        for i, sat in enumerate(self.curr_visible_sats):
-            if self.verbose and ("sat_bearing" in self.meas_type):
-                print(f"Satellite {self.id} can take bearing measurement to satellite {sat.id}")
-            noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_sat_bearing),size=(3))
-            vec = self.curr_pos - sat.curr_pos
-            z[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
+        if self.camera_exists:
+            for i, sat in enumerate(self.curr_visible_sats):
+                if self.verbose and ("sat_bearing" in self.meas_type):
+                    print(f"Satellite {self.id} can take bearing measurement to satellite {sat.id}")
+                noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_sat_bearing),size=(int(self.dim/2)))
+                vec = self.curr_pos - sat.curr_pos
+                z[i*3:i*3+3] = vec/np.linalg.norm(vec) + noise
         return z
 
     ## SIMPLIFIED INTERCEPTOR FOR ROUND EARTH ASSUMPTION ##

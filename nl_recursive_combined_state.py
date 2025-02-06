@@ -105,6 +105,11 @@ def run_simulation(args):
         # TODO: Complexify this function to handle different variance weights for different satellites
         cov_m = block_diag(*[ind_cov for _ in range(n_sats)])
         cov_p = block_diag(*[ind_cov for _ in range(n_sats)])
+
+        ### USE SAT 0 AS ANCHOR ###
+        # Set the initial covariance of the first satellite to be very small
+        # Q_block[0:6,0:6] = 1e-20*np.eye(6)
+
         total_x_m = np.zeros((state_dim * n_sats))
         total_x_p = np.zeros((state_dim * n_sats))
 
@@ -117,12 +122,18 @@ def run_simulation(args):
             total_x_m[i * state_dim : (i + 1) * state_dim] = sats[i].x_m
 
         # Looping for timesteps
-        for i in tqdm(range(N), desc="Timesteps"):       
+        for i in tqdm(range(N), desc="Timesteps"):   
+            print("Timestep", i)    
 
             for k, sat in enumerate(sats_copy):
                 # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
 
-                # print("sat old curr pos", sat.curr_pos)
+                ### USE SAT 0 AS ANCHOR ###
+                # if sat.id == 0:
+                #     sat.x_m = x_traj[i, :, 0]
+                #     cov_m[0:6,0:6] = 1e-20*np.eye(6)
+                #     cov_p[0:6,0:6] = 1e-20*np.eye(6)
+
                 sat.curr_pos = x_traj[i + 1, 0:3, k]
                 sat.x_p = f(sat.x_m, dt)
 
@@ -152,6 +163,11 @@ def run_simulation(args):
             # M_vec = [] # Combined Jacobian matrix for the process noise
 
             for sat in sats_copy:
+                
+                ### USE SAT 0 AS ANCHOR ###
+                # Skip the first satellite as we assume it has perfect knowledge
+                # if sat.id == 0:
+                #     continue
 
                 # Get visible landmarks using actual current position of other satellites
                 visible_landmarks = sat.visible_landmarks_list()
@@ -244,7 +260,7 @@ def run_simulation(args):
             # Individual covariances of sats don't matter for this because we use the full covariances
             for sat in sats_copy:
                 sat.x_m = total_x_m[sat.id * state_dim : (sat.id + 1) * state_dim]
-                # sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
+                sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
 
             # FIM Calculation
             print(np.linalg.cond(f_post))

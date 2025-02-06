@@ -2,39 +2,48 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from sat.dynamics import rk4_discretization
+from sat.dynamics import f_j
 
-class trajSolver:
-    def __init__(self, x_traj, y_m, sat, N, meas_dim, bearing_dim, n_sats, MU, state_dim, dt, is_initial):
+class trajSolver_v2:
+    def __init__(self, x_traj, sat, N, n_sats, state_dim, dt, is_initial):
         self.x_traj = x_traj
-        self.y_m = y_m
         self.sat = sat
         self.N = N
-        self.meas_dim = meas_dim
-        self.bearing_dim = bearing_dim
         self.n_sats = n_sats
-        self.MU = MU
         self.state_dim = state_dim
         self.dt = dt
-        self.cov = self.sat.R_weight*np.eye(self.bearing_dim)
-        self.inv_cov = np.linalg.inv(self.cov)
         self.is_inital = is_initial
 
     def objective(self, x):
         obj = 0
-        for i in range(self.N):
-            start_i = i*6
-            start_i1 = (i+1)*6
-            if self.y_m[i,0:self.bearing_dim,self.sat.id].any() != 0:
-                obj += (self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]).T)@self.inv_cov@(self.y_m[i,0:self.bearing_dim,self.sat.id] - self.sat.h_landmark(x[start_i:start_i+3]))
-            # add the dynamics to the objective
-            if i < self.N-1: # Don't add the dynamics optimization for the last time step
-                obj += (x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))@(x[start_i1:start_i1+6] - rk4_discretization(x[start_i:start_i+6], self.dt))
-            for j in range(self.bearing_dim,self.meas_dim):
-                # print(j, y_m[i,j,self.sat.id])
-                # WE NEED TO NEGLECT RANGING MEASUREMENTS IF THE SATELLITE DOES NOT HAVE A GOOD LOCK ON ITS OWN POSITION
-                if self.y_m[i,self.bearing_dim:self.meas_dim,self.sat.id].any() != 0:
-                    obj += (1/self.sat.R_weight)*(self.y_m[i,j,self.sat.id] - self.sat.h_inter_range(i, j, x[start_i:start_i+3]))**2
+
+        for i in range(self.N):   
+            self.sat.curr_pos = self.x_traj[i + 1, 0:3, 0]
+
+            # Get visible landmarks using actual current position
+            visible_landmarks = self.sat.visible_landmarks_list()
+            self.sat.land_bearing_dim = len(visible_landmarks) * 3
+            
+            meas_dim = self.sat.land_bearing_dim
+
+            # Re-initialize the measurement matrices for each satellite with the correct dimensions
+            if meas_dim > 0:
+
+                # Calculate Jacobian matrix H for combined state (still just one satellite H)
+                # H = combined_H(sat, meas_dim, state_dim, meas_type)
+                
+                if self.sat.land_bearing_dim > 0:
+                    y_m = self.sat.measure_z_landmark()
+                    # tmp = self.sat.h_landmark(x[i:i+3])
+                    inv_cov = np.linalg.inv(self.sat.R_weight_land_bearing*np.eye(self.sat.land_bearing_dim))
+                    obj += (y_m - self.sat.h_landmark(x[i:i+3]))@inv_cov@(y_m - self.sat.h_landmark(x[i:i+3]))
+                
+                if i < self.N - 1:
+                    term = x[(i+1)*6:(i+2)*6] - f_j(x[i*6:(i+1)*6],self.dt)
+                    obj += term.T@term
+
+            elif meas_dim == 0:
+                continue
         return obj
     
 
@@ -61,7 +70,7 @@ class trajSolver:
                 x_i = x[i*self.state_dim:(i+1)*self.state_dim]
                 x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
                 
-                x_new = rk4_discretization(x_i, self.dt)
+                x_new = f_j(x_i, self.dt)
                 g = g.at[(i+1)*self.state_dim:(i+2)*self.state_dim].set(x_new - x_ip1)
             
         else:
@@ -71,13 +80,14 @@ class trajSolver:
                 x_i = x[i*self.state_dim:(i+1)*self.state_dim]
                 x_ip1 = x[(i+1)*self.state_dim:(i+2)*self.state_dim]
                 
-                x_new = rk4_discretization(x_i, self.dt)
+                x_new = f_j(x_i, self.dt)
                 g = g.at[(i)*self.state_dim:(i+1)*self.state_dim].set(x_new - x_ip1)
 
         return g
 
     def jacobian(self, x):
         jacobian = jax.jacfwd(self.constraints)(x)
+        # print(jacobian.T)
         jacobian = jacobian[self.jrow, self.jcol]
         
         return jacobian

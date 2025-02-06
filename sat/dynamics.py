@@ -197,3 +197,30 @@ def f_jac(x: np.ndarray, dt: float) -> np.ndarray:
     :return: A numpy array of shape (6, 6) containing the state transition Jacobian.
     """
     return RK4_jac(x, state_derivative, state_derivative_jac, dt)
+
+
+def f_j(x: jnp.ndarray, dt: float) -> jnp.ndarray:
+    """
+    The discrete-time state transition function, x_{t+1} = f_d(x_t), for orbital position dynamics under gravity.
+    J2 perturbations are not included.
+
+    :param x: A numpy array of shape (6,) containing the current state (position and velocity).
+    :param dt: The amount of time between each time step.
+    :return: A numpy array of shape (6,) containing the next state (position and velocity).
+    """
+    return RK4(x, state_derivative_j, dt)
+
+
+def state_derivative_j(x: jnp.ndarray) -> jnp.ndarray:
+    """
+    The continuous-time state derivative function, \dot{x} = f_c(x), for orbital position dynamics under gravity.
+    J2 perturbations are not included.
+
+    :param x: A jax numpy array of shape (6,) containing the current state (position and velocity).
+    :return: A jax numpy array of shape (6,) containing the state derivative.
+    """
+    r = x[:3]
+    v = x[3:]
+    a = -r * MU / (jnp.linalg.norm(r) ** 3)
+
+    return jnp.concatenate([v, a])
