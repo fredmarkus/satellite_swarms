@@ -4,15 +4,13 @@ Information theoretic analysis of the satellite network.
 
 import numpy as np
 
-from sat.core import satellite
-
-def fpost_sanity_check(f_post: np.ndarray, sat: satellite, verbose: bool, state_dim: int):
+def fpost_sanity_check(f_post: np.ndarray, cov_m: np.ndarray, verbose: bool, state_dim: int):
     """
     Perform a sanity check on the Posterior FIM of the satellite. The FIM should be positive definite.\
 
     Args:
         f_post (np.ndarray): The Posterior FIM of the satellite.
-        sat (satellite): The satellite object.
+        cov_m (np.ndarray): The combined Covariance matrix.
         verbose (bool): Whether to print the FIM and its properties.
         state_dim (int): The dimension of the state vector.
 
@@ -21,19 +19,17 @@ def fpost_sanity_check(f_post: np.ndarray, sat: satellite, verbose: bool, state_
     """
 
     if np.linalg.matrix_rank(f_post) == state_dim:
-        if not np.all(np.linalg.eigvals(sat.cov_m - np.linalg.inv(f_post)) > 0):
-            raise ValueError(f"FIM of satellite {sat.id} is not positive definite")
+        if not np.all(np.linalg.eigvals(cov_m - np.linalg.inv(f_post)) > 0):
+            raise ValueError(f"Covariance Matrix is not positive definite")
 
     # # Check if f_post is invertible
     if np.linalg.matrix_rank(f_post) != state_dim:
         if verbose:
             print(f_post)
-            print(f"Satellite {sat.id} FIM is not invertible")
 
     else:
         eig_val, eig_vec = np.linalg.eig(f_post)
         if verbose:
-            print(f"Eigenvalues of satellite {sat.id} FIM: ", eig_val)
             print("Condition number of FIM: ", np.linalg.cond(f_post))
             print("Eigenvectors of FIM: ", eig_vec)
 
