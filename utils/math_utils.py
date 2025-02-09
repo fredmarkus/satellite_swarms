@@ -1,3 +1,6 @@
+"""
+Module for mathematical utilities.
+"""
 import numpy as np
 from scipy.linalg import block_diag
 
@@ -38,7 +41,15 @@ def M_Jac(y):
     return block_diag(*M)
 
 def vector_to_az_el(vec: np.ndarray) -> tuple:
-    # Assumes vec is [x, y, z] and nonzero
+    """
+    Convert a 3D vector to azimuth and elevation.
+    Args:
+        vec: 3D vector
+    
+    Returns:
+        Azimuth and elevation in radians
+    """
+    # Assumes vec is [x, y, z]
     if np.linalg.norm(vec) == 0:
         return 0, 0
     
@@ -48,8 +59,40 @@ def vector_to_az_el(vec: np.ndarray) -> tuple:
     return azimuth, elevation
 
 def az_el_to_vector(az: float, el: float) -> np.ndarray:
+    """
+    Convert azimuth and elevation to a 3D vector.
+    Args:
+        az: Azimuth in radians.
+        el: Elevation in radians.
+
+    Returns:
+        3D vector
+    """
     # Assumes azimuth and elevation are in radians
     y = np.cos(el[0]) * np.sin(az[0])
     x = np.cos(el[0]) * np.cos(az[0])
     z = np.sin(el[0])
     return np.array([x, y, z])
+
+def transform_eci_to_lvlh(x: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """
+    Transform ECI coordinates to LVLH frame.
+    Args:
+        x: ECI position vector
+        v: ECI velocity vector
+    
+    Returns:
+        R: Rotation matrix from ECI to LVLH frame
+    """
+    h_new = np.cross(x, v)
+    h_new = h_new / np.linalg.norm(h_new)
+    z_new = -x / np.linalg.norm(x)
+    x_new = np.cross(z_new, h_new)
+    # Define y_new to complete right handed system
+    y_new = np.cross(z_new, x_new)
+
+    R = np.column_stack((x_new, y_new, z_new))
+
+    return R
+
+

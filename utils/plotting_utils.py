@@ -138,7 +138,7 @@ def all_sat_position_error(pos_error,n_sats,meas_type, cov_hist):
         # plt.plot(three_sigma_y, label=f'3 sigma y sat {i}', color='black', linestyle=':')
         # plt.plot(three_sigma_z, label=f'3 sigma z sat {i}', color='black', linestyle=':')
 
-        plt.title(f'Absolute Position Error for {n_sats} satellites for measurement type {meas_type}')
+        plt.title(f'Absolute Position Error (LVLH) for {n_sats} satellites for measurement type {meas_type}')
         plt.xlabel('Timestep')
         plt.ylabel('Absolute Position Error (km)')
         plt.legend()

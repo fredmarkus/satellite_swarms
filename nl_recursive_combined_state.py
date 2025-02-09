@@ -25,6 +25,7 @@ from utils.data_io_utils import import_landmarks
 from utils.data_io_utils import store_all_data
 from utils.data_io_utils import setup_data_dir
 from utils.math_utils import M_Jac
+from utils.math_utils import transform_eci_to_lvlh
 from utils.plotting_utils import all_sat_position_error
 from utils.plotting_utils import plot_all_sat_crb_trace
 from utils.plotting_utils import plot_trajectory
@@ -50,6 +51,7 @@ def run_simulation(args):
             - verbose (bool): Flag to enable verbose output.
             - ignore_earth (bool): Flag to ignore Earth in the simulation.
             - measurement_type (list): List of measurement types to be used.
+            - anchor (bool): Flag to indicate whether to use an anchor satellite (will be satellite with id 0)
 
     Raises:
         ValueError: If the number of satellites specified is greater than the number of satellites in the YAML file.
@@ -70,6 +72,7 @@ def run_simulation(args):
     state_dim = args.state_dim
     num_trials = args.num_trials
     meas_type = args.measurement_type
+    anchor = args.anchor
 
     # Process noise covariance matrix based on paper "Autonomous orbit determination and observability analysis for formation satellites"
     # by OU Yangwei, ZHANG Hongbo, XING Jianjun page 6
@@ -106,14 +109,15 @@ def run_simulation(args):
         cov_m = block_diag(*[ind_cov for _ in range(n_sats)])
         cov_p = block_diag(*[ind_cov for _ in range(n_sats)])
 
-        ### USE SAT 0 AS ANCHOR ###
-        # Set the initial covariance of the first satellite to be very small
-        # Q_block[0:6,0:6] = 1e-20*np.eye(6)
+        # Set the initial covariance of the first satellite to be very small when using anchor mode
+        if anchor:
+            Q_block[0:6,0:6] = 1e-20*np.eye(6)
 
         total_x_m = np.zeros((state_dim * n_sats))
         total_x_p = np.zeros((state_dim * n_sats))
 
         comb_curr_pos = np.zeros((3 * n_sats))
+        lvlh_curr_pos = np.zeros((3 * n_sats))
 
         A = np.zeros((n_sats * state_dim, n_sats * state_dim))
 
@@ -122,18 +126,18 @@ def run_simulation(args):
             total_x_m[i * state_dim : (i + 1) * state_dim] = sats[i].x_m
 
         # Looping for timesteps
-        for i in tqdm(range(N), desc="Timesteps"):   
-            print("Timestep", i)    
+        for i in tqdm(range(N), desc="Timesteps"):
+            if args.verbose:   
+                print("Timestep", i)    
 
             for k, sat in enumerate(sats_copy):
+
+                if sat.id == 0 and anchor:
+                    sat.x_m = x_traj[i, :, 0]
+                    cov_m[0:6,0:6] = 1e-20*np.eye(6)
+                    cov_p[0:6,0:6] = 1e-20*np.eye(6)
+
                 # Provide the underlying groundtruth position to the satellite for bearing and ranging measurements
-
-                ### USE SAT 0 AS ANCHOR ###
-                # if sat.id == 0:
-                #     sat.x_m = x_traj[i, :, 0]
-                #     cov_m[0:6,0:6] = 1e-20*np.eye(6)
-                #     cov_p[0:6,0:6] = 1e-20*np.eye(6)
-
                 sat.curr_pos = x_traj[i + 1, 0:3, k]
                 sat.x_p = f(sat.x_m, dt)
 
@@ -164,10 +168,9 @@ def run_simulation(args):
 
             for sat in sats_copy:
                 
-                ### USE SAT 0 AS ANCHOR ###
                 # Skip the first satellite as we assume it has perfect knowledge
-                # if sat.id == 0:
-                #     continue
+                if sat.id == 0 and anchor:
+                    continue
 
                 # Get visible landmarks using actual current position of other satellites
                 visible_landmarks = sat.visible_landmarks_list()
@@ -260,7 +263,8 @@ def run_simulation(args):
                 sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
 
             # FIM Calculation
-            print(np.linalg.cond(f_post))
+            # print(np.linalg.cond(f_post))
+
             # Assign Posterior Covariance
             cov_hist[trial, i, :, :] = cov_m
 
@@ -269,7 +273,16 @@ def run_simulation(args):
                 .transpose()
                 .reshape(-1)
             )
-            pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
+
+            # Convert to LVLH frame
+            for j in range(n_sats):
+                # R_curr_pos = transform_eci_to_lvlh(x_traj[i + 1, 0:3, j],x_traj[i + 1, 3:6, j])
+                R_filter = transform_eci_to_lvlh(total_x_m[j*state_dim:j*state_dim+3],total_x_m[j*state_dim + 3:(j+1)*state_dim])
+
+                filter_position[trial, i, j*3:j*3+3] = R_filter.T @ filter_position[trial, i, j*3:j*3+3]
+                lvlh_curr_pos[j*3:j*3+3] = R_filter.T @ comb_curr_pos[j*3:j*3+3]
+
+            pos_error[trial, i, :] = filter_position[trial, i, :] - lvlh_curr_pos
 
             # # Sanity check that Cov - FIM is positive definite (Should always be true)
             fpost_sanity_check(f_post, cov_m, args.verbose, state_dim)
@@ -320,9 +333,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Nonlinear Recursive Monte Carlo Simulation"
     )
-    parser.add_argument("--N", type=int, default=100, help="Number of timesteps")
     parser.add_argument(
-        "--f", type=float, default=1, help="Frequency of the simulation"
+        "--N", 
+        type=int,
+        default=100,
+        help="Number of timesteps")
+    parser.add_argument(
+        "--f", 
+        type=float,
+        default=1,
+        help="Frequency of the simulation"
     )
     parser.add_argument(
         "--ignore_earth",
@@ -332,9 +352,16 @@ if __name__ == "__main__":
                         Bearing measurements always consider the earth.",
     )
     parser.add_argument(
-        "--num_trials", type=int, default=1, help="Number of Monte Carlo trials"
+        "--num_trials",
+        type=int,
+        default=1,
+        help="Number of Monte Carlo trials"
     )
-    parser.add_argument("--n_sats", type=int, default=1, help="Number of satellites")
+    parser.add_argument(
+        "--n_sats",
+        type=int,
+        default=1,
+        help="Number of satellites")
     parser.add_argument(
         "--random_yaml",
         action="store_true",
@@ -348,14 +375,28 @@ if __name__ == "__main__":
         help="Run simulations for all number of satellites from 1 to n_sats",
     )
     parser.add_argument(
-        "--state_dim", type=int, default=6, help="Dimension of the state vector"
+        "--state_dim",
+        type=int,
+        default=6,
+        help="Dimension of the state vector"
     )
     parser.add_argument(
-        "--verbose", action="store_true", default=False, help="Print information"
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Print information"
     )
     parser.add_argument(
-        "--measurement_type", nargs="+", help="Type of measurements to be used \
+        "--measurement_type",
+        nargs="+",
+        help="Type of measurements to be used \
             Options are 'range', 'land', 'sat_bearing'"
+    )
+    parser.add_argument(
+        "--anchor",
+        action="store_true",
+        default=False,
+        help="Use first satellite as anchor",
     )
     args = parser.parse_args()
 
