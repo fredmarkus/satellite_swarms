@@ -39,7 +39,7 @@ from utils.yaml_autogen_utils import generate_satellites_yaml
 def solve_nls(x_traj, nlp, N,state_dim):
     # Randomize initia; guess
     # TODO: Fix this to make the initial guess noise a function of the error between ground truth and last guess
-    glob_x0 = x_traj[:-1,:,0] + np.random.normal(loc=0,scale=2,size=(N,state_dim))
+    glob_x0 = x_traj[:-1,:,0] + np.random.normal(loc=0,scale=100_000,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
     nlp.add_option('max_iter', 400)
@@ -138,14 +138,16 @@ def run_simulation(args):
         is_initial=False,
     )
 
+    # TODO: Parameterize m and cl,cu as parameter of is_initial (size changes depending)
+    # FOR NOW USE SOLVING FOR INITIAL CONDITIONS INCLUSIVE
     nlp = cyipopt.Problem(
         n = N * state_dim,
-        m = (N - 1) * state_dim,
+        m = N * state_dim,
         problem_obj=solver,
         lb = jnp.full(N * state_dim, -jnp.inf),
         ub = jnp.full(N * state_dim, jnp.inf),
-        cl = [0] * ((N - 1) * state_dim),
-        cu = [0] * ((N - 1) * state_dim),
+        cl = [0] * (N * state_dim),
+        cu = [0] * (N * state_dim),
     )
 
     x = solve_nls(x_traj, nlp, N, state_dim)

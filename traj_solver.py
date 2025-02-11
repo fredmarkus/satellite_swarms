@@ -32,10 +32,6 @@ class trajSolver_v2:
 
             # Re-initialize the measurement matrices for each satellite with the correct dimensions
             if meas_dim > 0:
-                # print("Meas dim",meas_dim)
-
-                # Calculate Jacobian matrix H for combined state (still just one satellite H)
-                # H = combined_H(sat, meas_dim, state_dim, meas_type)
                 
                 if self.sat.land_bearing_dim > 0:
                     start_i = i*self.state_dim
@@ -87,7 +83,7 @@ class trajSolver_v2:
     def jacobian(self, x):
         jacobian = jax.jacfwd(self.constraints)(x)
         # print(jacobian.T)
-        # jacobian = jacobian[self.jrow, self.jcol]
+        jacobian = jacobian[self.jrow, self.jcol]
         
         return jacobian
 
@@ -125,11 +121,11 @@ class trajSolver_v2:
                     row.append(i * dim + row_offset)
                     col.append(i * dim + col_offset)
         # Visualization of the Jacobian mask. Check it matches the actual Jacobian. Using '11' rather than '1' for easier intepretation
-        jac = np.zeros((self.N*6,self.N*6))
-        for i in range(len(row)):
-            jac[row[i],col[i]] = 11
+        # jac = np.zeros((self.N*6,self.N*6))
+        # for i in range(len(row)):
+        #     jac[row[i],col[i]] = 11
 
-        print(jac)
+        # print(jac)
         self.jrow = np.array(row, dtype=int)
         self.jcol = np.array(col, dtype=int)
 
