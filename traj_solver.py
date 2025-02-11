@@ -12,7 +12,7 @@ class trajSolver_v2:
         self.n_sats = n_sats
         self.state_dim = state_dim
         self.dt = dt
-        self.is_inital = is_initial
+        self.is_initial = is_initial
 
     def objective(self, x):
         obj = 0
@@ -25,25 +25,24 @@ class trajSolver_v2:
             self.sat.land_bearing_dim = len(visible_landmarks) * 3
             
             meas_dim = self.sat.land_bearing_dim
+            
+            if i < self.N - 1:
+                term = x[(i+1)*6:(i+2)*6] - f_j(x[i*6:(i+1)*6],self.dt)
+                obj += term.T@term
 
             # Re-initialize the measurement matrices for each satellite with the correct dimensions
             if meas_dim > 0:
+                # print("Meas dim",meas_dim)
 
                 # Calculate Jacobian matrix H for combined state (still just one satellite H)
                 # H = combined_H(sat, meas_dim, state_dim, meas_type)
                 
                 if self.sat.land_bearing_dim > 0:
+                    start_i = i*self.state_dim
                     y_m = self.sat.measure_z_landmark()
-                    # tmp = self.sat.h_landmark(x[i:i+3])
                     inv_cov = np.linalg.inv(self.sat.R_weight_land_bearing*np.eye(self.sat.land_bearing_dim))
-                    obj += (y_m - self.sat.h_landmark(x[i:i+3]))@inv_cov@(y_m - self.sat.h_landmark(x[i:i+3]))
-                
-                if i < self.N - 1:
-                    term = x[(i+1)*6:(i+2)*6] - f_j(x[i*6:(i+1)*6],self.dt)
-                    obj += term.T@term
+                    obj += (y_m - self.sat.h_landmark(x[start_i:start_i + 3])).T@inv_cov@(y_m - self.sat.h_landmark(x[start_i:start_i+3]))
 
-            elif meas_dim == 0:
-                continue
         return obj
     
 
@@ -53,7 +52,7 @@ class trajSolver_v2:
         return grad
 
     def constraints(self, x):
-        if not self.is_inital:
+        if not self.is_initial:
             g = jnp.zeros((self.N)*self.state_dim)
 
             # Position initial conditions
@@ -88,7 +87,7 @@ class trajSolver_v2:
     def jacobian(self, x):
         jacobian = jax.jacfwd(self.constraints)(x)
         # print(jacobian.T)
-        jacobian = jacobian[self.jrow, self.jcol]
+        # jacobian = jacobian[self.jrow, self.jcol]
         
         return jacobian
 
@@ -99,7 +98,7 @@ class trajSolver_v2:
         col = []
 
         # Initial conditions (only added if we are not in the initial case)
-        if not self.is_inital:
+        if not self.is_initial:
             row.extend([0,1,2,3,4,5])
             col.extend([0,1,2,3,4,5])
 
@@ -114,7 +113,7 @@ class trajSolver_v2:
         ]
 
         # Loop over the range and apply the offsets
-        if not self.is_inital:
+        if not self.is_initial:
             for i in range(0, self.N-1):
                 for row_offset, col_offset in offsets:
                     row.append((i+1) * dim + row_offset)
@@ -126,11 +125,11 @@ class trajSolver_v2:
                     row.append(i * dim + row_offset)
                     col.append(i * dim + col_offset)
         # Visualization of the Jacobian mask. Check it matches the actual Jacobian. Using '11' rather than '1' for easier intepretation
-        # jac = np.zeros((self.N*6,self.N*6))
-        # for i in range(len(row)):
-        #     jac[row[i],col[i]] = 11
+        jac = np.zeros((self.N*6,self.N*6))
+        for i in range(len(row)):
+            jac[row[i],col[i]] = 11
 
-        # print(jac)
+        print(jac)
         self.jrow = np.array(row, dtype=int)
         self.jcol = np.array(col, dtype=int)
 

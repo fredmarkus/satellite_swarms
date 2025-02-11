@@ -39,11 +39,11 @@ from utils.yaml_autogen_utils import generate_satellites_yaml
 def solve_nls(x_traj, nlp, N,state_dim):
     # Randomize initia; guess
     # TODO: Fix this to make the initial guess noise a function of the error between ground truth and last guess
-    glob_x0 = x_traj[:-1,:,0] + np.random.normal(loc=0,scale=1000,size=(N,state_dim))
+    glob_x0 = x_traj[:-1,:,0] + np.random.normal(loc=0,scale=2,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
-    nlp.add_option('max_iter', 100)
-    nlp.add_option('tol', 1e-6)
+    nlp.add_option('max_iter', 400)
+    nlp.add_option('tol', 1e-2)
     nlp.add_option('print_level', 5)
     nlp.add_option('mu_strategy', 'adaptive')
     nlp.add_option('hessian_approximation', 'limited-memory') # 'exact' or 'limited-memory'
@@ -103,9 +103,9 @@ def run_simulation(args):
     Q = np.diag(np.array([1e-9, 1e-9, 1e-9, 1e-12, 1e-12, 1e-12]))
     Q_block = block_diag(*[Q for _ in range(n_sats)])
     # Individual covariance matrix for each satellite
-    ind_cov = np.diag(
-        np.array([1, 1, 1, 1, 1, 1])
-    )  
+    # ind_cov = np.diag(
+    #     np.array([1, 1, 1, 1, 1, 1])
+    # )  
     nls_estimates = []
 
     ### Satellite Initialization ###
@@ -125,85 +125,85 @@ def run_simulation(args):
     filter_position = np.zeros((num_trials, N, 3 * n_sats))
     pos_error = np.zeros((num_trials, N, 3 * n_sats))
 
-    for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):            
+    # for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):            
 
         #Initialize the NLP
-        solver = trajSolver_v2(
-            x_traj=x_traj,
-            sat=sats_copy[0], # TODO: Enable for multiple satellites 
-            N=N,
-            n_sats=n_sats,
-            state_dim=state_dim,
-            dt=dt,
-            is_initial=True,
-        )
+    solver = trajSolver_v2(
+        x_traj=x_traj,
+        sat=sats_copy[0], # TODO: Enable for multiple satellites 
+        N=N,
+        n_sats=n_sats,
+        state_dim=state_dim,
+        dt=dt,
+        is_initial=False,
+    )
 
-        nlp = cyipopt.Problem(
-            n = N * state_dim,
-            m = (N - 1) * state_dim,
-            problem_obj=solver,
-            lb = jnp.full(N * state_dim, -jnp.inf),
-            ub = jnp.full(N * state_dim, jnp.inf),
-            cl = [0] * ((N - 1) * state_dim),
-            cu = [0] * ((N - 1) * state_dim),
-        )
+    nlp = cyipopt.Problem(
+        n = N * state_dim,
+        m = (N - 1) * state_dim,
+        problem_obj=solver,
+        lb = jnp.full(N * state_dim, -jnp.inf),
+        ub = jnp.full(N * state_dim, jnp.inf),
+        cl = [0] * ((N - 1) * state_dim),
+        cu = [0] * ((N - 1) * state_dim),
+    )
 
-        x = solve_nls(x_traj, nlp, N, state_dim)
-        nls_estimates.append(x)
+    x = solve_nls(x_traj, nlp, N, state_dim)
+    nls_estimates.append(x)
 
-        error = np.linalg.norm(x - x_traj[:-1,:,0].flatten())
+    error = np.linalg.norm(x - x_traj[:-1,:,0].flatten())
 
-        print(x)
+    print(x)
 
-        # # Set sat's x_m so that they can be used for the next prior update x_p state.
-        # # Individual covariances of sats don't matter for this because we use the full covariances
-        # for sat in sats_copy:
-        #     sat.x_m = total_x_m[sat.id * state_dim : (sat.id + 1) * state_dim]
-        #     # sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
+    # # Set sat's x_m so that they can be used for the next prior update x_p state.
+    # # Individual covariances of sats don't matter for this because we use the full covariances
+    # for sat in sats_copy:
+    #     sat.x_m = total_x_m[sat.id * state_dim : (sat.id + 1) * state_dim]
+    #     # sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
 
-        # # FIM Calculation
-        # print(np.linalg.cond(f_post))
-        # # Assign Posterior Covariance
-        # cov_hist[trial, i, :, :] = cov_m
+    # # FIM Calculation
+    # print(np.linalg.cond(f_post))
+    # # Assign Posterior Covariance
+    # cov_hist[trial, i, :, :] = cov_m
 
-        # filter_position[trial, i, :] = (
-        #     np.array([total_x_m[0::state_dim], total_x_m[1::state_dim], total_x_m[2::state_dim]])
-        #     .transpose()
-        #     .reshape(-1)
-        # )
-        # pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
+    # filter_position[trial, i, :] = (
+    #     np.array([total_x_m[0::state_dim], total_x_m[1::state_dim], total_x_m[2::state_dim]])
+    #     .transpose()
+    #     .reshape(-1)
+    # )
+    # pos_error[trial, i, :] = filter_position[trial, i, :] - comb_curr_pos
 
-        # # # Sanity check that Cov - FIM is positive definite (Should always be true)
-        # fpost_sanity_check(f_post, cov_m, args.verbose, state_dim)
+    # # # Sanity check that Cov - FIM is positive definite (Should always be true)
+    # fpost_sanity_check(f_post, cov_m, args.verbose, state_dim)
 
-        # fim[trial, i, :, :] = f_post
+    # fim[trial, i, :, :] = f_post
 
-        # # Reset the satellites to initial condition for the next trial
-        # sats_copy = copy.deepcopy(
-        #     sats
-        # )  
+    # # Reset the satellites to initial condition for the next trial
+    # sats_copy = copy.deepcopy(
+    #     sats
+    # )  
 
     # Average history of relevant variables
-    fim = np.mean(fim, axis=0)
-    cov_hist = np.mean(cov_hist, axis=0)
-    pos_error = np.mean(pos_error, axis=0)
+    # fim = np.mean(fim, axis=0)
+    # cov_hist = np.mean(cov_hist, axis=0)
+    # pos_error = np.mean(pos_error, axis=0)
 
-    # Calculate Covariance and CRB trace
-    cov_trace = get_cov_trace(N, cov_hist, n_sats)
-    crb_trace = get_crb_trace(N, fim, n_sats)
+    # # Calculate Covariance and CRB trace
+    # cov_trace = get_cov_trace(N, cov_hist, n_sats)
+    # crb_trace = get_crb_trace(N, fim, n_sats)
 
 
     # Save the results to files
-    store_all_data(
-        n_sats=n_sats,
-        cov_trace=cov_trace,
-        crb_trace=crb_trace,
-        pos_error=pos_error,
-        sats=sats,
-    )
+    # store_all_data(
+    #     n_sats=n_sats,
+    #     cov_trace=cov_trace,
+    #     crb_trace=crb_trace,
+    #     pos_error=pos_error,
+    #     sats=sats,
+    # )
 
     # Plotting of errors
-    all_sat_position_error(pos_error, n_sats, meas_type, cov_hist)
+    # all_sat_position_error(pos_error, n_sats, meas_type, cov_hist)
 
     # Plot filter trajectories
     # plot_trajectory(x_traj[:,:,0], filter_position[0,:,0:3], N)
