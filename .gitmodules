@@ -1,0 +1,3 @@
+[submodule "GNC-Payload"]
+	path = GNC-Payload
+	url = https://github.com/cmu-argus-2/GNC-Payload

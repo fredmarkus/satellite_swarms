@@ -5,39 +5,61 @@ import jax.numpy as jnp
 from sat.dynamics import f_j
 
 class trajSolver_v2:
-    def __init__(self, x_traj, sat, N, n_sats, state_dim, dt, is_initial):
+    def __init__(self, x_traj, N, n_sats, state_dim, dt, is_initial, sats_collection, meas_type):
+        self.sat_collection = sats_collection
         self.x_traj = x_traj
-        self.sat = sat
+        self.sat = self.sat_collection[0] # Use satellite 0
         self.N = N
         self.n_sats = n_sats
         self.state_dim = state_dim
         self.dt = dt
         self.is_initial = is_initial
+        self.meas_type = meas_type
 
     def objective(self, x):
         obj = 0
 
-        for i in range(self.N):   
-            self.sat.curr_pos = self.x_traj[i + 1, 0:3, 0]
+        for i in range(self.N):
 
-            # Get visible landmarks using actual current position
-            visible_landmarks = self.sat.visible_landmarks_list()
-            self.sat.land_bearing_dim = len(visible_landmarks) * 3
+            for sat in self.sat_collection:
+                sat.curr_pos = self.x_traj[i + 1, 0:3, sat.id]
+
+            # Get visible landmarks and satellites using actual current position
+            if "land" in self.meas_type:
+                visible_landmarks = self.sat.visible_landmarks_list()
+                self.sat.land_bearing_dim = len(visible_landmarks) * 3
+ 
+            visible_sats = self.sat.visible_sats_list(self.sat_collection)
+
+            if "sat_bearing" in self.meas_type:
+                self.sat.sat_bearing_dim = len(visible_sats) * 3
+
+            if "range" in self.meas_type:
+                self.sat.range_dim = len(visible_sats)
             
-            meas_dim = self.sat.land_bearing_dim
+            meas_dim = self.sat.land_bearing_dim + self.sat.sat_bearing_dim + self.sat.range_dim
             
             if i < self.N - 1:
                 term = x[(i+1)*6:(i+2)*6] - f_j(x[i*6:(i+1)*6],self.dt)
                 obj += term.T@term
 
-            # Re-initialize the measurement matrices for each satellite with the correct dimensions
             if meas_dim > 0:
+                start_i = i*self.state_dim
                 
                 if self.sat.land_bearing_dim > 0:
-                    start_i = i*self.state_dim
                     y_m = self.sat.measure_z_landmark()
                     inv_cov = np.linalg.inv(self.sat.R_weight_land_bearing*np.eye(self.sat.land_bearing_dim))
                     obj += (y_m - self.sat.h_landmark(x[start_i:start_i + 3])).T@inv_cov@(y_m - self.sat.h_landmark(x[start_i:start_i+3]))
+                
+                if self.sat.sat_bearing_dim > 0:
+                    y_m = self.sat.measure_z_sat_bearing()
+                    inv_cov = np.linalg.inv(self.sat.R_weight_sat_bearing*np.eye(self.sat.sat_bearing_dim))
+                    obj += (y_m - self.sat.h_sat_bearing(x[start_i:start_i + 3])).T@inv_cov@(y_m - self.sat.h_sat_bearing(x[start_i:start_i+3]))
+
+                if self.sat.range_dim > 0:
+                    y_m = self.sat.measure_z_range()
+                    inv_cov = np.linalg.inv(self.sat.R_weight_range*np.eye(self.sat.range_dim))
+                    obj += (y_m - self.sat.h_inter_range(x[start_i:start_i + 3])).T@inv_cov@(y_m - self.sat.h_inter_range(x[start_i:start_i+3]))
 
         return obj
     

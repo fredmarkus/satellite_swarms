@@ -4,7 +4,6 @@ Simulation setup for satellite formation flying using recursive filter.
 
 import argparse
 from collections import deque
-import copy
 import cyipopt
 import os
 
@@ -12,13 +11,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import block_diag
-from tqdm import tqdm
 import yaml
 
 from analysis import fpost_sanity_check
 from analysis import get_cov_trace
 from analysis import get_crb_trace
-from sat.construct_jacobian import combined_H
 from sat.dynamics import exchange_trajectories
 from sat.dynamics import f
 from sat.dynamics import f_jac
@@ -39,15 +36,15 @@ from utils.yaml_autogen_utils import generate_satellites_yaml
 def solve_nls(x_traj, nlp, N,state_dim):
     # Randomize initia; guess
     # TODO: Fix this to make the initial guess noise a function of the error between ground truth and last guess
-    glob_x0 = x_traj[:-1,:,0] + np.random.normal(loc=0,scale=100_000,size=(N,state_dim))
+    glob_x0 = x_traj[:-1,:,0] + np.random.normal(loc=0,scale=1,size=(N,state_dim))
     glob_x0 = glob_x0.flatten()
 
     nlp.add_option('max_iter', 400)
-    nlp.add_option('tol', 1e-2)
-    nlp.add_option('print_level', 5)
+    nlp.add_option('tol', 1e-4)
+    nlp.add_option('print_level', 3)
     nlp.add_option('mu_strategy', 'adaptive')
     nlp.add_option('hessian_approximation', 'limited-memory') # 'exact' or 'limited-memory'
-    nlp.add_option('linear_solver', 'mumps')
+    nlp.add_option('linear_solver', 'ma57')
     # nlp.add_option('limited_memory_max_history', 10)
     # nlp.add_option('limited_memory_max_skipping', 2)
     # nlp.add_option('bound_push',1e-6)
@@ -112,30 +109,26 @@ def run_simulation(args):
     sats = load_sat_config(args=args)
 
     x_traj = simulate_nominal_trajectories(N, dt, sats, state_dim)
+    np.save(f"data/nominal_trajectory.npy", x_traj)
 
     # Transfer the positions of the other satellites for each satellite at N+1 timesteps
     sats = exchange_trajectories(sats, x_traj)
 
     ## Calculate FIM in recursive fashion.
-    fim = np.zeros((num_trials, N, state_dim * n_sats, state_dim * n_sats))
-    cov_hist = np.zeros((num_trials, N, state_dim * n_sats, state_dim * n_sats))
+    # fim = np.zeros((num_trials, N, state_dim * n_sats, state_dim * n_sats))
+    # cov_hist = np.zeros((num_trials, N, state_dim * n_sats, state_dim * n_sats))
 
-    sats_copy = copy.deepcopy(sats)
-
-    filter_position = np.zeros((num_trials, N, 3 * n_sats))
-    pos_error = np.zeros((num_trials, N, 3 * n_sats))
-
-    # for trial in tqdm(range(num_trials), desc=f"Monte Carlo for {n_sats} sat"):            
 
         #Initialize the NLP
     solver = trajSolver_v2(
         x_traj=x_traj,
-        sat=sats_copy[0], # TODO: Enable for multiple satellites 
         N=N,
         n_sats=n_sats,
         state_dim=state_dim,
         dt=dt,
         is_initial=False,
+        sats_collection=sats, 
+        meas_type=meas_type,
     )
 
     # TODO: Parameterize m and cl,cu as parameter of is_initial (size changes depending)
@@ -153,9 +146,10 @@ def run_simulation(args):
     x = solve_nls(x_traj, nlp, N, state_dim)
     nls_estimates.append(x)
 
-    error = np.linalg.norm(x - x_traj[:-1,:,0].flatten())
+    error = x - x_traj[:-1,:,0].reshape(-1)
 
-    print(x)
+    print(error)
+    np.save(f"data/states_least_squares_error.npy", error)
 
     # # Set sat's x_m so that they can be used for the next prior update x_p state.
     # # Individual covariances of sats don't matter for this because we use the full covariances
