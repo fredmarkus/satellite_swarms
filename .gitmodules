@@ -1,3 +1,6 @@
 [submodule "GNC-Payload"]
 	path = GNC-Payload
 	url = https://github.com/cmu-argus-2/GNC-Payload
+[submodule "gnc_payload"]
+	path = gnc_payload
+	url = https://github.com/cmu-argus-2/GNC-Payload
