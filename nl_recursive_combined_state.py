@@ -5,6 +5,13 @@ Simulation setup for satellite formation flying using recursive filter.
 import argparse
 import copy
 import os
+import sys
+
+import brahe
+from brahe.epoch import Epoch
+
+submodule_path = os.path.join(os.path.dirname(__file__), './gnc_payload')
+sys.path.append(submodule_path)
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -31,6 +38,10 @@ from utils.plotting_utils import plot_all_sat_crb_trace
 from utils.plotting_utils import plot_trajectory
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
+from utils.ubi_config_utils import load_config
+from gnc_payload.orbit_determination.landmark_bearing_sensors import GroundTruthLandmarkBearingSensor
+from gnc_payload.orbit_determination.od_simulation_data_manager import ODSimulationDataManager
+from gnc_payload.utils.earth_utils import get_nadir_rotation
 
 def run_simulation(args):
     """
@@ -66,8 +77,14 @@ def run_simulation(args):
         4. Save and plot the results
     """
 
-    N = args.N
-    dt = 1 / args.f  # Hz
+    config = load_config()
+
+    config["solver"]["world_update_rate"] = 1 / 60  # Hz
+    config["mission"]["duration"] = 3 * 90 * 60  # s, roughly 1 orbit
+
+    dt = 1 / config["solver"]["world_update_rate"]
+    N = int(np.ceil(config["mission"]["duration"] / dt))  # number of time steps in the simulation
+    
     n_sats = args.n_sats
     state_dim = args.state_dim
     num_trials = args.num_trials
@@ -141,6 +158,11 @@ def run_simulation(args):
                 sat.curr_pos = x_traj[i + 1, 0:3, k]
                 sat.x_p = f(sat.x_m, dt)
 
+                # Push the next state to the data manager to make it available for landmark measurements
+                sat.data_manager.push_next_state(
+                    np.expand_dims(sat.curr_pos, axis=0), np.expand_dims(get_nadir_rotation(sat.curr_pos), axis=0)
+                )
+
                 # Assign the state transition matrix to the correct block in the A matrix
                 A[k * state_dim : (k + 1) * state_dim,
                   k * state_dim : (k + 1) * state_dim,
@@ -173,11 +195,13 @@ def run_simulation(args):
                     continue
 
                 # Get visible landmarks using actual current position of other satellites
-                visible_landmarks = sat.visible_landmarks_list()
+                # visible_landmarks = sat.visible_landmarks_list()
                 visible_sats = sat.visible_sats_list(sats_copy)
 
                 if "land" in meas_type:
-                    sat.land_bearing_dim = len(visible_landmarks) * 3
+                    sat.data_manager.take_measurement(sat.landmark_bearing_sensor)
+                    sat.land_bearing_dim = len(sat.data_manager.curr_landmarks) * 3
+                    # sat.land_bearing_dim = len(visible_landmarks) * 3
 
                 if "sat_bearing" in meas_type:
                     sat.sat_bearing_dim = len(visible_sats) * 3
@@ -196,8 +220,12 @@ def run_simulation(args):
                     H = combined_H(sat, meas_dim, state_dim, meas_type)
                     
                     if "land" in meas_type and sat.land_bearing_dim > 0:
+                        # Extend the h and y_m vectors with the landmark measurements
+                        z_land_bearing = sat.data_manager.curr_bearing_unit_vectors
+                        y_m.extend(z_land_bearing)
+
+                        z_landmarks = sat.data_manager.curr_landmarks
                         h.extend(sat.h_landmark(sat.x_p[0:3]).tolist())
-                        y_m.extend(sat.measure_z_landmark().tolist())
                         R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
                         # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
 

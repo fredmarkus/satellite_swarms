@@ -5,11 +5,19 @@ import jax
 import math
 import numpy as np
 
+import brahe
+from brahe.epoch import Epoch
+
+from gnc_payload.orbit_determination.landmark_bearing_sensors import GroundTruthLandmarkBearingSensor
+from gnc_payload.orbit_determination.od_simulation_data_manager import ODSimulationDataManager
 from landmarks.landmark import landmark
 from utils.math_utils import R_X
 from utils.math_utils import R_Z
 from utils.math_utils import az_el_to_vector
 from utils.math_utils import vector_to_az_el
+from utils.ubi_config_utils import load_config
+
+from gnc_payload.utils.earth_utils import get_nadir_rotation
 
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
@@ -97,6 +105,19 @@ class satellite:
         self.meas_type = meas_type
         self.HEIGHT = 550
 
+        config = load_config()
+        config["solver"]["world_update_rate"] = 1 / 60  # Hz
+        config["mission"]["duration"] = 3 * 90 * 60  # s, roughly 1 orbit
+
+        dt = 1 / config["solver"]["world_update_rate"]
+        starting_epoch = Epoch(*brahe.time.mjd_to_caldate(config["mission"]["start_date"]))
+        self.data_manager = ODSimulationDataManager(starting_epoch, dt)
+        self.landmark_bearing_sensor = GroundTruthLandmarkBearingSensor(config=config)
+
+        self.data_manager.push_next_state(
+            np.expand_dims(self.x_0, axis=0), np.expand_dims(get_nadir_rotation(self.x_0), axis=0)
+        )
+
     ### Visibility functions for landmarks and satellites ###
 
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
@@ -139,7 +160,7 @@ class satellite:
         return self.curr_visible_sats
 
     def h_landmark(self, x):
-        h = jnp.zeros((len(self.curr_visible_landmarks)*3))
+        h = jnp.zeros((len(self.data_manager.curr_landmarks)*3))
 
         if self.camera_exists:
             for i, landmark in enumerate(self.curr_visible_landmarks):

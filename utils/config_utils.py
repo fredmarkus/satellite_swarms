@@ -3,7 +3,8 @@ This file contains the method to initialize the satellite objects
 based on the configuration provided in the yaml file.
 """
 
-from typing import List
+import os
+from typing import Any, List
 
 import argparse
 import yaml
