@@ -4,12 +4,16 @@ Construct the Jacobian matrix/matrices for the desired problem.
 from typing import List
 
 import numpy as np
+from brahe import Epoch
+import jax.numpy as jnp
+
+from gnc_payload.sensors.camera_model import CameraModelManager
 
 # pylint: disable=import-error
 # pylint: disable=invalid-name
 from sat.core import satellite
 
-def combined_H(sat: satellite,  meas_dim: int, state_dim: int, meas_type: List[str]) -> np.ndarray:
+def combined_H(sat: satellite,  meas_dim: int, state_dim: int, meas_type: List[str], z: np.ndarray, camera_model_manager: CameraModelManager, measurement_camera_names: np.ndarray, x_p: jnp.ndarray, epoch: Epoch) -> np.ndarray:
 
     """
     Calculate the Jacobian matrix for a single satellite using the combined measurement model for various measurement types.
@@ -27,17 +31,17 @@ def combined_H(sat: satellite,  meas_dim: int, state_dim: int, meas_type: List[s
 
     if "land" in meas_type:
         H[0 : sat.land_bearing_dim, sat.id * state_dim : (sat.id + 1) * state_dim] = (
-            sat.H_landmark(sat.x_p)
+            sat.H_landmark_actual(z,camera_model_manager, measurement_camera_names, x_p, epoch)
         )
 
     if "sat_bearing" in meas_type:
-        bearing_J = sat.H_sat_bearing(sat.x_p)
+        bearing_J = sat.H_sat_bearing(x_p)
         H[sat.land_bearing_dim:sat.sat_bearing_dim + sat.land_bearing_dim,sat.id * state_dim : (sat.id + 1) * state_dim] = bearing_J
         for i , other_sat in enumerate(sat.curr_visible_sats):
             H[sat.land_bearing_dim + i*3 : sat.land_bearing_dim + (i+1)*3, other_sat.id * state_dim : (other_sat.id + 1) * state_dim] = -bearing_J[i*3:(i+1)*3, :]
 
     if "range" in meas_type:
-        dist_J = sat.H_inter_range(sat.x_p)
+        dist_J = sat.H_inter_range(x_p)
         H[sat.sat_bearing_dim + sat.land_bearing_dim:meas_dim,sat.id * state_dim : (sat.id + 1) * state_dim] = dist_J
         for i , other_sat in enumerate(sat.curr_visible_sats):
             H[sat.sat_bearing_dim + sat.land_bearing_dim + i : sat.sat_bearing_dim + sat.land_bearing_dim + i + 1, other_sat.id * state_dim : (other_sat.id + 1) * state_dim] = -dist_J[i, :]

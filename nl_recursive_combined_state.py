@@ -27,7 +27,7 @@ from sat.dynamics import exchange_trajectories
 from sat.dynamics import f
 from sat.dynamics import f_jac
 from sat.dynamics import simulate_nominal_trajectories
-from utils.config_utils import load_sat_config
+from utils.core_config_utils import load_sat_config
 from utils.data_io_utils import import_landmarks
 from utils.data_io_utils import store_all_data
 from utils.data_io_utils import setup_data_dir
@@ -38,7 +38,7 @@ from utils.plotting_utils import plot_all_sat_crb_trace
 from utils.plotting_utils import plot_trajectory
 from utils.yaml_autogen_utils import generate_satellites_yaml
 
-from utils.ubi_config_utils import load_config
+from utils.config_utils import load_config
 from gnc_payload.orbit_determination.landmark_bearing_sensors import GroundTruthLandmarkBearingSensor
 from gnc_payload.orbit_determination.od_simulation_data_manager import ODSimulationDataManager
 from gnc_payload.utils.earth_utils import get_nadir_rotation

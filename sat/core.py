@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 import jax.numpy as jnp
 import jax
@@ -7,18 +7,22 @@ import numpy as np
 
 import brahe
 from brahe.epoch import Epoch
+import quaternion
 
 from gnc_payload.orbit_determination.landmark_bearing_sensors import GroundTruthLandmarkBearingSensor
 from gnc_payload.orbit_determination.od_simulation_data_manager import ODSimulationDataManager
+from gnc_payload.sensors.camera_model import CameraModelManager
 from landmarks.landmark import landmark
+from utils.imu_utils import imu_init
 from utils.math_utils import R_X
 from utils.math_utils import R_Z
 from utils.math_utils import az_el_to_vector
 from utils.math_utils import vector_to_az_el
-from utils.ubi_config_utils import load_config
+from utils.config_utils import load_config
 
-from gnc_payload.utils.earth_utils import get_nadir_rotation
 
+from gnc_payload.dynamics.ekf_dynamics import EKFDynamics
+from gnc_payload.utils.math_utils import left_q, Drp2q, G, rot_2_q, R
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
 MASS = 2 # kg # Mass of the satellite
@@ -28,23 +32,27 @@ POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
 
 class satellite:
 
-    def __init__(self, 
-                 pos_cov_init: float, 
-                 vel_cov_init: float, 
-                 robot_id: int, 
-                 dim: int, 
-                 R_weight_range: float,
-                 R_weight_land_bearing: float, 
-                 R_weight_sat_bearing: float,
-                 N: int, 
-                 n_sats: int, 
-                 landmarks: object,
-                 orbital_elements: dict,
-                 camera_exists: bool,
-                 camera_fov: float,
-                 verbose: bool,
-                 ignore_earth: bool,
-                 meas_type: list) -> None:
+    def __init__(
+            self, 
+            pos_cov_init: float, 
+            vel_cov_init: float, 
+            robot_id: int, 
+            dim: int, 
+            R_weight_range: float,
+            R_weight_land_bearing: float, 
+            R_weight_sat_bearing: float,
+            N: int, 
+            n_sats: int, 
+            landmarks: object,
+            orbital_elements: dict,
+            camera_exists: bool,
+            camera_fov: float,
+            verbose: bool,
+            ignore_earth: bool,
+            meas_type: list,
+            Q_noise: np.ndarray,
+            ua: np.ndarray = None
+                 ) -> None:
         
         # Calculate initial state based on orbital elements placing 
         a = float(orbital_elements["a"])
@@ -58,16 +66,19 @@ class satellite:
         r = a*(1-e**2)/(1+e*np.cos(M))
         perifocal = np.array([r*np.cos(M), r*np.sin(M), 0])
         Q = R_X(-omega_dot)@R_Z(-omega)@R_X(-i)
-        pos_0 = Q@perifocal
+        r_0 = Q@perifocal
 
         # Velocity calculation
         v_x = -math.sqrt(MU/a)*np.sin(M)/(1+e*np.cos(M))
         v_y = math.sqrt(MU/a)*(e + np.cos(M))/(1+e*np.cos(M))
         v_z = 0
-        vel_0 = Q@np.array([v_x, v_y, v_z])
+        v_0 = Q@np.array([v_x, v_y, v_z])
     
-        self.x_0 = np.append(pos_0,vel_0) # Initial state vector of the satellite
-        self.cov_m = np.diag(np.array([float(pos_cov_init), float(pos_cov_init), float(pos_cov_init), float(vel_cov_init), float(vel_cov_init), float(vel_cov_init)]))
+        # Unit conversion
+        r_0 = r_0 * 1000 # Convert to meters
+        v_0 = v_0 * 1000 # Convert to m/s
+
+        # Initial position, velocity vector of the satellite [m, m/s]
         self.id = robot_id # Unique identifier for the satellite
         self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
         self.R_weight_range = float(R_weight_range)
@@ -86,18 +97,24 @@ class satellite:
 
         # Initialize the measurement vector with noise
         np.random.seed(123)
-        self.x_m = self.x_0 # Initialize the measurement vector exactly the same as the initial state vector
-        pos_init_noise = np.random.normal(loc=0,scale=math.sqrt(10),size=int(self.dim/2))
-        vel_init_noise = np.random.normal(loc=0,scale=math.sqrt(1e-4),size=int(self.dim/2))
         # # Add the noise to the initial state vector
-        self.x_m = self.x_m + np.append(pos_init_noise,vel_init_noise,axis=0) 
+        self.r_m = r_0 + np.random.normal(0, 5000, 3)
+        self.r_p = self.r_m
 
-        self.x_p = self.x_m
-        # Initialize the prior covariance the same as the measurement covariance
-        self.cov_p = self.cov_m
+        self.v_m = v_0 + np.random.normal(0, 10, 3)
+        self.v_p = self.v_m
 
         #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
-        self.curr_pos = self.x_0[0:3]
+        self.curr_pos = r_0
+
+        # Initialize the prior covariance the same as the measurement covariance
+        self.cov_m = np.eye(15)
+        self.cov_m[0:3, 0:3] *= 5
+        self.cov_m[3:6, 3:6] *= 5
+        self.cov_m[6:9, 6:9] *= 1e-4
+        self.cov_m[9:12, 9:12] *= 1e-4
+        self.cov_m[12:15, 12:15] *= 1e-4
+        self.cov_p = self.cov_m
 
         # Provide the position of the other satellites for all N timesteps
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1)))
@@ -105,20 +122,189 @@ class satellite:
         self.meas_type = meas_type
         self.HEIGHT = 550
 
-        config = load_config()
-        config["solver"]["world_update_rate"] = 1 / 60  # Hz
-        config["mission"]["duration"] = 3 * 90 * 60  # s, roughly 1 orbit
+        self.config = load_config()
+        self.config["solver"]["world_update_rate"] = 1 / 60  # Hz
+        self.config["mission"]["duration"] = 3 * 90 * 20  # s, roughly 1 orbit
 
-        dt = 1 / config["solver"]["world_update_rate"]
-        starting_epoch = Epoch(*brahe.time.mjd_to_caldate(config["mission"]["start_date"]))
-        self.data_manager = ODSimulationDataManager(starting_epoch, dt)
-        self.landmark_bearing_sensor = GroundTruthLandmarkBearingSensor(config=config)
+        self.dt = 1 / self.config["solver"]["world_update_rate"]
+        starting_epoch = Epoch(*brahe.time.mjd_to_caldate(self.config["mission"]["start_date"]))
+        self.data_manager = ODSimulationDataManager(starting_epoch, self.dt)
+        self.landmark_bearing_sensor = GroundTruthLandmarkBearingSensor()
+        self.camera_model_manager = CameraModelManager()
 
-        self.data_manager.push_next_state(
-            np.expand_dims(self.x_0, axis=0), np.expand_dims(get_nadir_rotation(self.x_0), axis=0)
+        init_rot = np.eye(3)
+        noisy_rot = init_rot + np.random.normal(0, 1e-2, (3, 3))
+        noisy_rot = noisy_rot @ np.linalg.inv(np.linalg.cholesky(noisy_rot.T @ noisy_rot))
+
+        # Ground truth states
+        x_0 = np.concatenate([r_0, v_0])
+        self.data_manager.push_next_state(x_0,init_rot)
+
+        self.ua_scale = 10
+        self.gyro_bias_scale = 2
+
+        self.imu = imu_init(self.dt)
+
+        self.ekf_dynamics = EKFDynamics(
+            config=self.config,
+            use_drag=False,
+            use_j2=False,
+            use_unmodelled_a=True,
+            ua_scale=self.ua_scale
         )
 
+        # Extra states
+        self.w_b = (self.imu.get_bias()[0] + np.random.normal(0, 5e-5, 3)) * self.gyro_bias_scale
+        self.q_m = quaternion.as_float_array(quaternion.from_rotation_matrix(noisy_rot))
+        self.q_p = self.q_m
+        self.ua = ua
+
+        self.Q_noise = Q_noise
+
+        self.z1 = None
+        self.measurement_camera_names = None
+
+
+    def predict(self, u: np.ndarray, epoch: Epoch = None) -> None:
+        """
+        Predict the next prior state. This corresponds to the prior update step in the EKF algorithm.
+        Using Zac Manchester's formulation as defined in his inertial filter examples notebook
+        https://github.com/RoboticExplorationLab/inertial-filter-examples
+
+        :param u: IMU measurements consisting of angular velocity and linear acceleration with shape (6,)
+        :param epoch: The epoch at which the prediction is made. If None is passed, no epoch is used.
+
+        :return: None
+        """
+
+        # TODO: Use IMU measurements and update quaternion estimate
+
+        w = u[0:3]  # angular velocity measurement from IMU
+
+        x = np.concatenate([self.r_m, self.v_m, self.ua])
+        A_pos = self.ekf_dynamics.perturbed_f_jac(x=x, dt=self.dt, epoch=epoch)
+        x_new = self.ekf_dynamics.perturbed_f(x=x, dt=self.dt, epoch=epoch)
+
+        self.q_p = left_q(self.q_m) @ quaternion.as_float_array(
+            quaternion.from_rotation_vector(self.dt * (w - self.w_b / self.gyro_bias_scale))
+        )
+
+        self.r_p = x_new[0:3]
+        self.v_p = x_new[3:6]
+        self.x_p = np.concatenate([self.r_p, self.v_p, self.ua, quaternion.as_rotation_vector(quaternion.as_quat_array(self.q_p)), self.w_b])
+
+        dqdq = quaternion.as_rotation_matrix(
+            quaternion.from_rotation_vector(-1 * self.dt * (w - self.w_b / self.gyro_bias_scale))
+        )
+        dqdw = (
+            -1
+            * self.dt
+            * G(self.q_p).T
+            @ left_q(self.q_m)
+            @ Drp2q(self.dt * (w - self.w_b / self.gyro_bias_scale))
+        )
+
+        A = np.block(
+            [
+                [A_pos, np.zeros((9, 6))],
+                [np.zeros((3, 9)), dqdq, dqdw],
+                [np.zeros((3, 12)), np.eye(3)],
+            ]
+        )
+
+        self.cov_p = A @ self.cov_m @ A.T + self.Q_noise
+    
     ### Visibility functions for landmarks and satellites ###
+
+    def measurement(
+        self,
+        z: Tuple[np.ndarray, np.ndarray],
+        camera_model_manager: CameraModelManager,
+        measurement_camera_names: np.ndarray,
+        epoch: Epoch,
+        num_iter: int = 1,
+    ) -> None:
+        """
+        Update the state estimate based on the measurement. This corresponds to the posterior update step
+        in the EKF algorithm.
+
+        :param z: Measurement consisting of a tuple of the bearing unit vectors in the body frame and the
+        landmark positions in ECI coordinates, both with shape (N, 3)
+        :param camera_model_manager: The camera model manager used to manage the cameras.
+        :param measurement_camera_names: The names of the cameras that took the measurements.
+        :param epoch: The epoch at which the measurement is made. Epoch must be provided for ecef-eci transformation!
+        :param num_iter: Number of iterations of the update steps to perform. Default is 1.
+
+        :return: None
+        """
+        # Select a random fraction of the measurements to use to speed up computations
+        mask = np.random.choice([True, False], size=z[0].shape[0], p=[0.04, 0.96])
+        z0 = z[0][mask]
+        z1 = z[1][mask]
+
+        measurement_camera_names = measurement_camera_names[mask]
+
+        # Flatten the measurement vector
+        z0 = np.array(z0.reshape(-1))
+
+        # Chance that the measurement vector is empty when mask is applied
+        # (higher likelihood with fewer measurements)
+        if z0.shape[0] == 0:
+            self.no_measurement()
+            print("No measurements taken")
+            return
+
+        # Let R take the dimensionality of the number of measurements
+        self.R = np.diag([1e-2] * z0.shape[0])
+
+        x_p = jnp.array(
+            np.concatenate(
+                [
+                    self.r_p,
+                    self.v_p,
+                    self.ua,
+                    quaternion.as_rotation_vector(quaternion.as_quat_array(self.q_p)),
+                    self.w_b,
+                ]
+            )
+        )
+        # Iterated Update
+        for i in range(num_iter):
+
+            h = self.h_est(z1, camera_model_manager, measurement_camera_names, x_p, epoch=epoch)
+            H = self.h_jac(z1, camera_model_manager, measurement_camera_names, x_p, epoch=epoch)
+            S = H @ self.P_p @ H.T + self.R
+
+            # Check for ill-conditioned matrix and add regularization if necessary
+            if i == 0:
+                cond = np.linalg.cond(S)
+                print(cond)
+                if cond > self.cond_threshold:
+                    S += np.eye(S.shape[0]) * 1e-6
+                    print("Ill-conditioned matrix detected. Regularization applied.")
+
+            K = self.P_p @ H.T @ np.linalg.inv(S)
+
+            delta = K @ (z0 - h)
+
+            self.r_m = np.array(x_p[0:3]) + delta[0:3]
+            self.v_m = np.array(x_p[3:6]) + delta[3:6]
+            self.ua = np.array(x_p[6:9]) + delta[6:9]
+            self.q_m = quaternion.as_rotation_vector(
+                quaternion.from_rotation_vector(np.array(x_p[9:12]))
+                * quaternion.from_rotation_vector(delta[9:12])
+            )
+            self.w_b = np.array(x_p[12:15]) + delta[12:15]
+
+            # Joseph form covariance update
+            self.P_m = (np.eye(self.P_m.shape[0]) - K @ H) @ self.P_p @ (
+                np.eye(self.P_m.shape[0]) - K @ H
+            ).T + K @ self.R @ K.T
+
+            x_p = jnp.array(np.concatenate([self.r_m, self.v_m, self.ua, self.q_m, self.w_b]))
+        # Convert final iterated rotation vector to quaternion
+        self.q_m = quaternion.as_float_array(quaternion.from_rotation_vector(self.q_m))
+
 
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
         # Check if the earth is in the way of the own position and the other position
@@ -158,6 +344,83 @@ class satellite:
                 if self.ignore_earth or self.is_visible_ellipse(self.curr_pos, sat.curr_pos):
                     self.curr_visible_sats.append(sat)
         return self.curr_visible_sats
+
+    def h_landmark_actual(
+        self,
+        z: np.ndarray,
+        camera_model_manager: CameraModelManager,
+        measurement_camera_names: np.ndarray,
+        x_p: jnp.ndarray,
+        epoch: Epoch,
+    ) -> jnp.ndarray:
+        """
+        Generate an estimate from measurements made. Using the known locations of the landmarks, we can provide
+        a bearing estimate.
+
+        :param z: Measurements of the landmarks in frame, consisting of just the ECI coordinates of the landmarks
+        with shape (N, 3)
+        :param camera_model_manager: The camera model manager used to manage the cameras.
+        :param measurement_camera_names: Array of names of the cameras that took each measurement.
+        :param x_p: Prior state estimate consisting of [position, velocity, rotation_vector] with shape (9,)
+        :param epoch: The epoch at which the measurement is made. Epoch must be provided for ecef-eci transformation!
+
+        :return: Estimate of the bearing vectors to all landmarks in the body frame with shape (N * 3, )
+        """
+        estimate = jnp.zeros((len(z) * 3))
+
+        # Define rotation matrices
+        # transform rotation_vector to rotation matrix via quaternion
+        eci_R_body = R(rot_2_q(x_p[9:12]))
+        ecef_R_eci = brahe.frames.rECItoECEF(epc=epoch)
+        ecef_R_body = ecef_R_eci @ eci_R_body
+
+        # Transform landmarks and position from ECI to ECEF
+        landmarks_ecef = (ecef_R_eci @ z.T).T
+        position_ecef = ecef_R_eci @ x_p[0:3]
+
+        # Assert landmarks and measurement camera names are the same length
+        assert landmarks_ecef.shape[0] == len(
+            measurement_camera_names
+        ), "Landmarks and measurement camera names must be the same length"
+
+        # Calculate estimated bearing unit vectors in ECEF and transform to body frame
+        for i, land_pos_ecef in enumerate(landmarks_ecef):
+            # account for camera position in ECEF
+            camera_position_ecef = camera_model_manager[
+                measurement_camera_names[i]
+            ].get_camera_position(position_ecef, ecef_R_body)
+
+            vec_ecef = land_pos_ecef - camera_position_ecef
+            vec_ecef /= jnp.linalg.norm(vec_ecef)
+            body_vec = ecef_R_body.T @ vec_ecef
+            estimate = estimate.at[i * 3 : i * 3 + 3].set(body_vec)
+
+        return estimate
+    
+    def H_landmark_actual(
+        self,
+        z: np.ndarray,
+        camera_model_manager: CameraModelManager,
+        measurement_camera_names: np.ndarray,
+        x_p: jnp.ndarray,
+        epoch: Epoch,
+    ) -> jnp.ndarray:
+        """
+        Calculate the Jacobian of the measurement model with respect to the state.
+
+        :param z: Measurement consisting of the landmark locations in ECI coordinates with shape (N, 3)
+        :param camera_model_manager: The camera model manager used to manage the cameras.
+        :param measurement_camera_names: Array of names of the cameras that took each measurement.
+        :param x_p: Prior state estimate consisting of position, quaternion and velocity with shape (9,)
+        :param epoch: The epoch at which the measurement is made. Epoch must be provided for ecef-eci transformation!
+
+        :return: The Jacobian of the measurement model with respect to the state.
+        """
+        jac = jax.jacobian(self.h_landmark_actual, argnums=3)(
+            z, camera_model_manager, measurement_camera_names, x_p, epoch=epoch
+        )
+
+        return jac
 
     def h_landmark(self, x):
         h = jnp.zeros((len(self.data_manager.curr_landmarks)*3))

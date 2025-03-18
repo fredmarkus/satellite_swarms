@@ -21,7 +21,7 @@ from sat.dynamics import f
 from sat.dynamics import f_jac
 from sat.dynamics import simulate_nominal_trajectories
 from traj_solver import trajSolver_v2
-from utils.config_utils import load_sat_config
+from utils.core_config_utils import load_sat_config
 from utils.data_io_utils import import_landmarks
 from utils.data_io_utils import store_all_data
 from utils.data_io_utils import setup_data_dir
