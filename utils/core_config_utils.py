@@ -13,7 +13,7 @@ import yaml
 #pylint: disable=import-error
 from sat.core import satellite
 
-def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray) -> List[satellite]:
+def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray, freq: float, time_horizon: float) -> List[satellite]:
     """
     Generate a list of satellite configurations based on the provided arguments 
     and YAML configuration files.
@@ -21,6 +21,9 @@ def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray) -> List[satel
     Args:
         args (argparse.Namespace): Command-line arguments containing satellite 
             configuration parameters.
+        Q_noise (np.ndarray): Noise covariance matrix.
+        freq (float): Frequency for the simulation.
+        time_horizon (float): Total time horizon for the simulation.
 
     Returns:
         List[satellite]: A list of satellite instances configured according to the provided arguments 
@@ -69,6 +72,8 @@ def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray) -> List[satel
             sat_config["meas_type"] = args.measurement_type
             sat_config["Q_noise"] = Q_noise
             sat_config["ua"] = np.random.normal(0, 1e-5, 3) * 10
+            sat_config["freq"] = freq
+            sat_config["time_horizon"] = time_horizon
 
             satellite_inst = satellite(**sat_config)
             sats.append(satellite_inst)

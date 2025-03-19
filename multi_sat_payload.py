@@ -55,6 +55,17 @@ from gnc_payload.sensors.camera_model import CameraModelManager
 from gnc_payload.utils.brahe_utils import load_brahe_data_files_if_needed
 
 
+def no_measurements(sats, total_x_p, cov_p):
+    for sat in sats:
+        sat.r_m = sat.r_p
+        sat.v_m = sat.v_p
+        sat.q_m = sat.q_p
+        total_x_m = total_x_p
+        cov_m = cov_p
+
+    return total_x_m, cov_m, sats
+
+
 def run_simulation(args):
     """
     Run a Monte Carlo simulation for satellite formation flying.
@@ -108,16 +119,18 @@ def run_simulation(args):
     Q_block = block_diag(*[Q for _ in range(n_sats)])
     # Individual covariance matrix for each satellite
     ind_cov = np.diag(
-        np.array([5, 5, 5, 5, 5, 5, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3, 1e-3])
+        np.array([5, 5, 5, 5, 5, 5, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4])
     )  
+
+    freq = 2
+    time_horizon = 3 * 90 * 15  # s
+    config = load_config()
+    config["solver"]["world_update_rate"] = freq  # Hz
+    config["mission"]["duration"] = time_horizon # s
 
     ### Satellite Initialization ###
     # TODO: Improve orbits to use actual sso orbits
-    sats = load_sat_config(args=args, Q_noise=Q)
-
-    config = load_config()
-    config["solver"]["world_update_rate"] = 2  # Hz
-    config["mission"]["duration"] = 3 * 90 * 20  # s
+    sats = load_sat_config(args=args, Q_noise=Q, freq=freq, time_horizon=time_horizon)
 
     dt = 1 / config["solver"]["world_update_rate"]
     # starting_epoch = Epoch(*brahe.time.mjd_to_caldate(config["mission"]["start_date"]))
@@ -130,7 +143,7 @@ def run_simulation(args):
     )
 
     # Number of iterations on the IEKF
-    num_iterations = 1
+    num_iterations = 5
 
     # Angular velocity
     w = np.array([0, 0, np.pi / 18])
@@ -207,7 +220,7 @@ def run_simulation(args):
                 # Assign the state transition matrix to the correct block in the A matrix
                 A[k * state_dim : (k + 1) * state_dim,
                   k * state_dim : (k + 1) * state_dim,
-                ] = sat.cov_p
+                ] = sat.A
 
                 # Update the combined state vector and underlying groundtruth
                 total_x_p[k * state_dim : (k + 1) * state_dim] = sat.x_p
@@ -222,11 +235,11 @@ def run_simulation(args):
             # Update the combined covariance matrix
             cov_p = A @ cov_m @ A.T + Q_block
 
-            comb_y_m = []  # Combined measurement vector
             R_vec = np.array([])  # Combined measurement noise vector
             # M_vec = [] # Combined Jacobian matrix for the process noise
 
             if i % 120 == 0:
+                comb_y_m = []  # Combined measurement vector
                 for sat in sats_copy:
                     
                     # Skip the first satellite as we assume it has perfect knowledge
@@ -268,33 +281,22 @@ def run_simulation(args):
                         y_m = []
 
                         if "land" in meas_type and sat.land_bearing_dim > 0:
-                            # h.extend(sat.h_landmark(sat.x_p[0:3]).tolist())
-                            # y_m.extend(sat.measure_z_landmark().tolist())
                             y_m.extend(z0.tolist())
                             R_vec = np.append(R_vec, [sat.R_weight_land_bearing] * sat.land_bearing_dim)
                             # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
 
                         if "sat_bearing" in meas_type and sat.sat_bearing_dim > 0:
-                            # h[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.h_sat_bearing(sat.x_p[0:3])
                             y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim] = sat.measure_z_sat_bearing()
                             R_vec = np.append(R_vec, [sat.R_weight_sat_bearing] * sat.sat_bearing_dim)
                             # M_vec.append(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
 
                         if "range" in meas_type and sat.range_dim > 0:
-                            # h.extend(sat.h_inter_range(sat.x_p[0:3]).tolist())
                             y_m.extend(sat.measure_z_range().tolist())
                             R_vec = np.append(R_vec, [sat.R_weight_range] * sat.range_dim)
                             # M_vec.append(np.eye((sat.range_dim)))
 
-
                         # Append vectors and matrices to combined form
                         comb_y_m.extend(y_m)
-                        # comb_h.extend(h)
-
-                        # if comb_H.size == 0:
-                        #     comb_H = H
-                        # else:
-                        #     comb_H = np.append(comb_H, H, axis=0)
 
                     elif sat.meas_dim == 0:
                         continue
@@ -304,123 +306,98 @@ def run_simulation(args):
                 # M_val = block_diag(*M_vec)
                 comb_y_m = np.array(comb_y_m).reshape(-1)
 
-                for j in range(num_iterations):
-                    # Reset estimation arrays
-                    comb_h = [] 
-                    comb_H = np.array([])
-                    for sat in sats_copy:
+                if len(comb_y_m) == 0:
+                    total_x_m, cov_m, sats_copy = no_measurements(sats_copy, total_x_p, cov_p)
+                
+                else:
+                    for j in range(num_iterations):
+                        # Reset estimation arrays
+                        comb_h = [] 
+                        comb_H = np.array([])
+                        for sat in sats_copy:
+                            sat.x_m = jnp.array(
+                                np.concatenate(
+                                    [
+                                        sat.r_p if j == 0 else sat.r_m,
+                                        sat.v_p if j == 0 else sat.v_m,
+                                        sat.ua,
+                                        quaternion.as_rotation_vector(quaternion.as_quat_array(sat.q_p)) if j == 0 else sat.q_m,
+                                        sat.w_b,
+                                    ]
+                                )
+                            )
+                            # Update the satellite estimates and use those in the combined state
+                            h = []
+                            if "land" in meas_type and sat.land_bearing_dim > 0:
+                                h.extend(sat.h_landmark_actual(sat.z1, sat.camera_model_manager, sat.measurement_camera_names, sat.x_m, epoch=latest_epoch).tolist())
+                                # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
+
+                            if "sat_bearing" in meas_type and sat.sat_bearing_dim > 0:
+                                h.extend(sat.h_sat_bearing(sat.x_m[0:3]).tolist())
+                                # M_vec.append(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
+
+                            if "range" in meas_type and sat.range_dim > 0:
+                                h.extend(sat.h_inter_range(sat.x_m[0:3]).tolist())
+                                # M_vec.append(np.eye((sat.range_dim)))
+
+                            comb_h.extend(h)
+                            # Calculate Jacobian matrix H for combined state (still just one satellite H)
+                            H = combined_H(sat, sat.meas_dim, state_dim, meas_type, sat.z1, sat.camera_model_manager, sat.measurement_camera_names, sat.x_m, epoch=latest_epoch)
+                            if comb_H.size == 0:
+                                    comb_H = H
+                            else:
+                                comb_H = np.append(comb_H, H, axis=0)
+
+                        # Kalman Gain TODO: Consider the M matrix to include with the process noise depends on how the noise is modelled. 
+                        # K2 = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + M_val @ R @ M_val.T)
+
+                        S = comb_H @ cov_p @ comb_H.T + R
                         if j == 0:
-                            sat.x_p = jnp.array(
-                                np.concatenate(
-                                    [
-                                        sat.r_p,
-                                        sat.v_p,
-                                        sat.ua,
-                                        quaternion.as_rotation_vector(quaternion.as_quat_array(sat.q_p)),
-                                        sat.w_b,
-                                    ]
-                                )
-                            )
-                        else:
-                            # set the updated state from the previous iteration
-                            sat.x_p = jnp.array(
-                                np.concatenate(
-                                    [
-                                        sat.r_m,
-                                        sat.v_m,
-                                        sat.ua,
-                                        quaternion.as_rotation_vector(quaternion.as_quat_array(sat.q_m)),
-                                        sat.w_b,
-                                    ]
-                                )
-                            )
+                            cond = np.linalg.cond(S)
+                            # print(cond)
+                            if cond > cond_threshold:
+                                S += np.eye(S.shape[0]) * 1e-6
+                                print("Ill-conditioned matrix detected. Regularization applied.")
 
-                        # Update the satellite estimates and use those in the combined state
-                        h = []
-                        if "land" in meas_type and sat.land_bearing_dim > 0:
-                            # h.extend(sat.h_landmark(sat.x_p[0:3]).tolist())
-                            h.extend(sat.h_landmark_actual(sat.z1, sat.camera_model_manager, sat.measurement_camera_names, sat.x_p, epoch=latest_epoch).tolist())
-                            # M_vec.append(M_Jac(y_m[0 : sat.land_bearing_dim]))
+                        K = cov_p @ comb_H.T @ np.linalg.inv(S)
+                        delta = K @ (comb_y_m - comb_h)
 
-                        if "sat_bearing" in meas_type and sat.sat_bearing_dim > 0:
-                            h.extend(sat.h_sat_bearing(sat.x_p[0:3].tolist()))
-                            # M_vec.append(M_Jac(y_m[sat.land_bearing_dim : sat.sat_bearing_dim + sat.land_bearing_dim]))
+                        for k, sat in enumerate(sats_copy):
+                            # Update the combined state vector
+                            sat.r_m = np.array(sat.x_m[0:3]) + delta[k * state_dim : k * state_dim + 3]
+                            sat.v_m = np.array(sat.x_m[3:6]) + delta[k * state_dim + 3 : k * state_dim + 6]
+                            sat.ua = np.array(sat.x_m[6:9]) + delta[k * state_dim + 6 : k * state_dim + 9]
+                            sat.q_m = quaternion.as_rotation_vector(
+                            quaternion.from_rotation_vector(np.array(sat.x_m[9:12]))
+                            * quaternion.from_rotation_vector(delta[k * state_dim + 9 : k * state_dim + 12]))
+                            sat.w_b = np.array(sat.x_m[12:15]) + delta[k * state_dim + 12 : k * state_dim + 15]
+                          
+                        # Update final "total" state vector and covariance matrix cov_m
+                    cov_m = (np.eye(state_dim * n_sats) - K @ comb_H) @ cov_p @ (
+                        (np.eye(state_dim * n_sats) - K @ comb_H).T
+                    ) + K @ R @ K.T
 
-                        if "range" in meas_type and sat.range_dim > 0:
-                            h.extend(sat.h_inter_range(sat.x_p[0:3]).tolist())
-                            # M_vec.append(np.eye((sat.range_dim)))
+                    f_post = (
+                        f_prior + comb_H.T @ np.linalg.inv(R) @ comb_H + np.linalg.inv(Q_block)
+                    )
 
-                        comb_h.extend(h)
-                        # Calculate Jacobian matrix H for combined state (still just one satellite H)
-                        H = combined_H(sat, sat.meas_dim, state_dim, meas_type, sat.z1, sat.camera_model_manager, sat.measurement_camera_names, sat.x_p, epoch=latest_epoch)
-                        if comb_H.size == 0:
-                                comb_H = H
-                        else:
-                            comb_H = np.append(comb_H, H, axis=0)
+                    # Set sat's x_m so that they can be used for the next prior update x_p state.
+                    # Individual covariances of sats don't matter for this because we use the full covariances
+                    for sat in sats_copy:
+                        total_x_m[sat.id * state_dim : sat.id * state_dim + 3] = sat.r_m
+                        total_x_m[sat.id * state_dim + 3 : sat.id * state_dim + 6] = sat.v_m
+                        total_x_m[sat.id * state_dim + 6 : sat.id * state_dim + 9] = sat.ua
+                        total_x_m[sat.id * state_dim + 9 : sat.id * state_dim + 12] = sat.q_m
+                        total_x_m[sat.id * state_dim + 12 : sat.id * state_dim + 15] = sat.w_b
 
-                    # Kalman Gain TODO: Consider the M matrix to include with the process noise depends on how the noise is modelled. 
-                    # K2 = cov_p @ comb_H.T @ np.linalg.inv(comb_H @ cov_p @ comb_H.T + M_val @ R @ M_val.T)
-
-                    S = comb_H @ cov_p @ comb_H.T + R
-                    if j == 0:
-                        cond = np.linalg.cond(S)
-                        print(cond)
-                        if cond > cond_threshold:
-                            S += np.eye(S.shape[0]) * 1e-6
-                            print("Ill-conditioned matrix detected. Regularization applied.")
-
-                    K = cov_p @ comb_H.T @ np.linalg.inv(S)
-                    delta = comb_y_m - comb_h
-
-                    for k, sat in enumerate(sats_copy):
-                        # Update the combined state vector
-                        sat.r_m = sat.x_p[0:3] + K[k * state_dim : (k * state_dim) + 3, :] @ delta
-                        sat.v_m = sat.x_p[3:6] + K[(k * state_dim) + 3 : (k * state_dim) + 6, :] @ delta
-                        sat.ua = sat.x_p[6:9] + K[(k * state_dim) + 6 : (k * state_dim) + 9, :] @ delta
-                        sat.q_m = quaternion.as_rotation_vector(
-                        quaternion.from_rotation_vector(np.array(sat.x_p[9:12]))
-                        * quaternion.from_rotation_vector(K[(k * state_dim) + 9 : (k * state_dim) + 12, :] @ delta))
-                        sat.w_b = sat.x_p[12:15] + K[(k * state_dim) + 12 : (k * state_dim) + 15, :] @ delta
-
-                        # total_x_m[i * state_dim : (i + 1) * state_dim] = (
-                    
-                    
-                # Update final "total" state vector and covariance matrix cov_m
-                cov_m = (np.eye(state_dim * n_sats) - K @ comb_H) @ cov_p @ (
-                    (np.eye(state_dim * n_sats) - K @ comb_H).T
-                ) + K @ R @ K.T
-
-                f_post = (
-                    f_prior + comb_H.T @ np.linalg.inv(R) @ comb_H + np.linalg.inv(Q_block)
-                )
-
-                # else: 
-                #     # No measurements so just set the prior as the posterior
-                #     total_x_m = total_x_p
-                #     cov_m = cov_p
-                #     f_post = f_prior
-
-                # Set sat's x_m so that they can be used for the next prior update x_p state.
-                # Individual covariances of sats don't matter for this because we use the full covariances
-                for sat in sats_copy:
-                    total_x_m[sat.id * state_dim : sat.id * state_dim + 3] = sat.r_m
-                    total_x_m[sat.id * state_dim + 3 : sat.id * state_dim + 6] = sat.v_m
-                    total_x_m[sat.id * state_dim + 6 : sat.id * state_dim + 9] = sat.ua
-                    total_x_m[sat.id * state_dim + 9 : sat.id * state_dim + 12] = sat.q_m
-                    total_x_m[sat.id * state_dim + 12 : sat.id * state_dim + 15] = sat.w_b
-
-                    sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
-                    
-                    # Convert final iterated rotation vector to quaternion
-                    sat.q_m = quaternion.as_float_array(quaternion.from_rotation_vector(sat.q_m))
+                        sat.cov_m = cov_m[sat.id * state_dim : (sat.id + 1) * state_dim, sat.id * state_dim : (sat.id + 1) * state_dim]
+                        
+                        # Convert final iterated rotation vector to quaternion
+                        sat.q_m = quaternion.as_float_array(quaternion.from_rotation_vector(sat.q_m))
             
-            # Set current prior as the current posterior
             else:
-                for sat in sats_copy:
-                    sat.r_m = sat.r_p
-                    sat.v_m = sat.v_p
-                    sat.q_m = sat.q_p    
-                    # Ua and gyro bias are not updated in the prior step     
+                # Ua and gyro bias are not updated in the prior step     
+                total_x_m, cov_m, sats_copy = no_measurements(sats_copy, total_x_p, cov_p)
                 
             # FIM Calculation
 
@@ -464,13 +441,13 @@ def run_simulation(args):
 
 
     # Save the results to files
-    store_all_data(
-        n_sats=n_sats,
-        cov_trace=cov_trace,
-        crb_trace=crb_trace,
-        pos_error=pos_error,
-        sats=sats,
-    )
+    # store_all_data(
+    #     n_sats=n_sats,
+    #     cov_trace=cov_trace,
+    #     crb_trace=crb_trace,
+    #     pos_error=pos_error,
+    #     sats=sats,
+    # )
 
     # Plotting of errors
     all_sat_position_error(pos_error, n_sats, meas_type, cov_hist)

@@ -51,6 +51,8 @@ class satellite:
             ignore_earth: bool,
             meas_type: list,
             Q_noise: np.ndarray,
+            freq: float,
+            time_horizon: float,
             ua: np.ndarray = None
                  ) -> None:
         
@@ -96,7 +98,7 @@ class satellite:
         self.range_dim = 0
 
         # Initialize the measurement vector with noise
-        np.random.seed(123)
+        # np.random.seed(123)
         # # Add the noise to the initial state vector
         self.r_m = r_0 + np.random.normal(0, 5000, 3)
         self.r_p = self.r_m
@@ -123,8 +125,8 @@ class satellite:
         self.HEIGHT = 550
 
         self.config = load_config()
-        self.config["solver"]["world_update_rate"] = 1 / 60  # Hz
-        self.config["mission"]["duration"] = 3 * 90 * 20  # s, roughly 1 orbit
+        self.config["solver"]["world_update_rate"] = freq  # Hz
+        self.config["mission"]["duration"] = time_horizon  # s, roughly 1 orbit
 
         self.dt = 1 / self.config["solver"]["world_update_rate"]
         starting_epoch = Epoch(*brahe.time.mjd_to_caldate(self.config["mission"]["start_date"]))
@@ -182,8 +184,8 @@ class satellite:
         w = u[0:3]  # angular velocity measurement from IMU
 
         x = np.concatenate([self.r_m, self.v_m, self.ua])
-        A_pos = self.ekf_dynamics.perturbed_f_jac(x=x, dt=self.dt, epoch=epoch)
         x_new = self.ekf_dynamics.perturbed_f(x=x, dt=self.dt, epoch=epoch)
+        A_pos = self.ekf_dynamics.perturbed_f_jac(x=x, dt=self.dt, epoch=epoch)
 
         self.q_p = left_q(self.q_m) @ quaternion.as_float_array(
             quaternion.from_rotation_vector(self.dt * (w - self.w_b / self.gyro_bias_scale))
@@ -204,7 +206,7 @@ class satellite:
             @ Drp2q(self.dt * (w - self.w_b / self.gyro_bias_scale))
         )
 
-        A = np.block(
+        self.A = np.block(
             [
                 [A_pos, np.zeros((9, 6))],
                 [np.zeros((3, 9)), dqdq, dqdw],
@@ -212,100 +214,9 @@ class satellite:
             ]
         )
 
-        self.cov_p = A @ self.cov_m @ A.T + self.Q_noise
+        self.cov_p = self.A @ self.cov_m @ self.A.T + self.Q_noise
     
     ### Visibility functions for landmarks and satellites ###
-
-    def measurement(
-        self,
-        z: Tuple[np.ndarray, np.ndarray],
-        camera_model_manager: CameraModelManager,
-        measurement_camera_names: np.ndarray,
-        epoch: Epoch,
-        num_iter: int = 1,
-    ) -> None:
-        """
-        Update the state estimate based on the measurement. This corresponds to the posterior update step
-        in the EKF algorithm.
-
-        :param z: Measurement consisting of a tuple of the bearing unit vectors in the body frame and the
-        landmark positions in ECI coordinates, both with shape (N, 3)
-        :param camera_model_manager: The camera model manager used to manage the cameras.
-        :param measurement_camera_names: The names of the cameras that took the measurements.
-        :param epoch: The epoch at which the measurement is made. Epoch must be provided for ecef-eci transformation!
-        :param num_iter: Number of iterations of the update steps to perform. Default is 1.
-
-        :return: None
-        """
-        # Select a random fraction of the measurements to use to speed up computations
-        mask = np.random.choice([True, False], size=z[0].shape[0], p=[0.04, 0.96])
-        z0 = z[0][mask]
-        z1 = z[1][mask]
-
-        measurement_camera_names = measurement_camera_names[mask]
-
-        # Flatten the measurement vector
-        z0 = np.array(z0.reshape(-1))
-
-        # Chance that the measurement vector is empty when mask is applied
-        # (higher likelihood with fewer measurements)
-        if z0.shape[0] == 0:
-            self.no_measurement()
-            print("No measurements taken")
-            return
-
-        # Let R take the dimensionality of the number of measurements
-        self.R = np.diag([1e-2] * z0.shape[0])
-
-        x_p = jnp.array(
-            np.concatenate(
-                [
-                    self.r_p,
-                    self.v_p,
-                    self.ua,
-                    quaternion.as_rotation_vector(quaternion.as_quat_array(self.q_p)),
-                    self.w_b,
-                ]
-            )
-        )
-        # Iterated Update
-        for i in range(num_iter):
-
-            h = self.h_est(z1, camera_model_manager, measurement_camera_names, x_p, epoch=epoch)
-            H = self.h_jac(z1, camera_model_manager, measurement_camera_names, x_p, epoch=epoch)
-            S = H @ self.P_p @ H.T + self.R
-
-            # Check for ill-conditioned matrix and add regularization if necessary
-            if i == 0:
-                cond = np.linalg.cond(S)
-                print(cond)
-                if cond > self.cond_threshold:
-                    S += np.eye(S.shape[0]) * 1e-6
-                    print("Ill-conditioned matrix detected. Regularization applied.")
-
-            K = self.P_p @ H.T @ np.linalg.inv(S)
-
-            delta = K @ (z0 - h)
-
-            self.r_m = np.array(x_p[0:3]) + delta[0:3]
-            self.v_m = np.array(x_p[3:6]) + delta[3:6]
-            self.ua = np.array(x_p[6:9]) + delta[6:9]
-            self.q_m = quaternion.as_rotation_vector(
-                quaternion.from_rotation_vector(np.array(x_p[9:12]))
-                * quaternion.from_rotation_vector(delta[9:12])
-            )
-            self.w_b = np.array(x_p[12:15]) + delta[12:15]
-
-            # Joseph form covariance update
-            self.P_m = (np.eye(self.P_m.shape[0]) - K @ H) @ self.P_p @ (
-                np.eye(self.P_m.shape[0]) - K @ H
-            ).T + K @ self.R @ K.T
-
-            x_p = jnp.array(np.concatenate([self.r_m, self.v_m, self.ua, self.q_m, self.w_b]))
-        # Convert final iterated rotation vector to quaternion
-        self.q_m = quaternion.as_float_array(quaternion.from_rotation_vector(self.q_m))
-
-
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
         # Check if the earth is in the way of the own position and the other position
         d = other_pos - own_pos
@@ -332,7 +243,7 @@ class satellite:
         # TODO: can be made faster by inferring that landmarks are more likely to be visible if they were visible in the previous timestep
         self.curr_visible_landmarks = []
         for landmark in self.landmarks:
-            if self.is_visible_ellipse(self.curr_pos, landmark.pos): # TODO: Consider ignoring the earth or not the speed up of ignoring is crazy.
+            if self.is_visible_ellipse(self.data_manager.latest_state[0:3], landmark.pos): # TODO: Consider ignoring the earth or not the speed up of ignoring is crazy.
                 self.curr_visible_landmarks.append(landmark)
 
         return self.curr_visible_landmarks
@@ -341,7 +252,7 @@ class satellite:
         self.curr_visible_sats = []
         for sat in sats:
             if sat.id != self.id:
-                if self.ignore_earth or self.is_visible_ellipse(self.curr_pos, sat.curr_pos):
+                if self.ignore_earth or self.is_visible_ellipse(self.data_manager.latest_state[0:3], sat.data_manager.latest_state[0:3]):
                     self.curr_visible_sats.append(sat)
         return self.curr_visible_sats
 
@@ -422,18 +333,18 @@ class satellite:
 
         return jac
 
-    def h_landmark(self, x):
-        h = jnp.zeros((len(self.data_manager.curr_landmarks)*3))
+    # def h_landmark(self, x):
+    #     h = jnp.zeros((len(self.data_manager.curr_landmarks)*3))
 
-        if self.camera_exists:
-            for i, landmark in enumerate(self.curr_visible_landmarks):
-                norm = jnp.linalg.norm(landmark.pos - x[0:3])
-                h = h.at[i*3:i*3+3].set((landmark.pos - x[0:3])/norm)
-        return h
+    #     if self.camera_exists:
+    #         for i, landmark in enumerate(self.curr_visible_landmarks):
+    #             norm = jnp.linalg.norm(landmark.pos - x[0:3])
+    #             h = h.at[i*3:i*3+3].set((landmark.pos - x[0:3])/norm)
+    #     return h
 
-    def H_landmark(self, x):
-        jac = jax.jacobian(self.h_landmark)(x)
-        return jac
+    # def H_landmark(self, x):
+    #     jac = jax.jacobian(self.h_landmark)(x)
+    #     return jac
 
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
@@ -467,7 +378,7 @@ class satellite:
                 print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
             
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-            z[i] = np.linalg.norm(self.curr_pos - sat.curr_pos) + noise
+            z[i] = np.linalg.norm(self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3]) + noise
             
         return z
     
@@ -478,7 +389,7 @@ class satellite:
             for i, landmark in enumerate(self.curr_visible_landmarks):
                 if self.verbose and ("land" in self.meas_type):
                     print(f"Satellite {self.id} can see landmark {landmark.name}")
-                vec = landmark.pos - self.curr_pos
+                vec = landmark.pos - self.data_manager.latest_state[0:3]
                 vec = vec/np.linalg.norm(vec)
                 az, el = vector_to_az_el(vec)
                 az = az + np.random.normal(loc=0,scale=math.sqrt(0.001),size=1)
@@ -494,7 +405,7 @@ class satellite:
             for i, sat in enumerate(self.curr_visible_sats):
                 if self.verbose and ("sat_bearing" in self.meas_type):
                     print(f"Satellite {self.id} can take bearing measurement to satellite {sat.id}")
-                vec = self.curr_pos - sat.curr_pos
+                vec = self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3]
                 vec = vec/np.linalg.norm(vec)
                 az, el = vector_to_az_el(vec)
                 az = az + np.random.normal(loc=0,scale=math.sqrt(0.001),size=1)
