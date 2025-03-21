@@ -12,6 +12,7 @@ import quaternion
 from gnc_payload.orbit_determination.landmark_bearing_sensors import GroundTruthLandmarkBearingSensor
 from gnc_payload.orbit_determination.od_simulation_data_manager import ODSimulationDataManager
 from gnc_payload.sensors.camera_model import CameraModelManager
+from gnc_payload.utils.orbit_utils import get_sso_orbit_state
 from landmarks.landmark import landmark
 from utils.imu_utils import imu_init
 from utils.math_utils import R_X
@@ -25,8 +26,8 @@ from gnc_payload.dynamics.ekf_dynamics import EKFDynamics
 from gnc_payload.utils.math_utils import left_q, Drp2q, G, rot_2_q, R
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
-MASS = 2 # kg # Mass of the satellite
-AREA = 1e-9 # km^2 # Cross-sectional area of the satellite
+MASS = 1 # kg # Mass of the satellite
+AREA = 1e-7 # km^2 # Cross-sectional area of the satellite
 EQ_RADIUS = 6378.1370 # km # Equatorial radius of the Earth
 POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
 
@@ -53,32 +54,17 @@ class satellite:
             Q_noise: np.ndarray,
             freq: float,
             time_horizon: float,
+            lat: float,
+            lon: float,
+            starting_epoch: Epoch,
             ua: np.ndarray = None
                  ) -> None:
         
-        # Calculate initial state based on orbital elements placing 
-        a = float(orbital_elements["a"])
-        e = float(orbital_elements["e"])
-        i = np.radians(float(orbital_elements["i"]))
-        omega = np.radians(float(orbital_elements["omega"]))
-        omega_dot = np.radians(float(orbital_elements["omega_dot"]))
-        M = np.radians(float(orbital_elements["M"]))
-        
-        # Position calculation
-        r = a*(1-e**2)/(1+e*np.cos(M))
-        perifocal = np.array([r*np.cos(M), r*np.sin(M), 0])
-        Q = R_X(-omega_dot)@R_Z(-omega)@R_X(-i)
-        r_0 = Q@perifocal
 
-        # Velocity calculation
-        v_x = -math.sqrt(MU/a)*np.sin(M)/(1+e*np.cos(M))
-        v_y = math.sqrt(MU/a)*(e + np.cos(M))/(1+e*np.cos(M))
-        v_z = 0
-        v_0 = Q@np.array([v_x, v_y, v_z])
-    
-        # Unit conversion
-        r_0 = r_0 * 1000 # Convert to meters
-        v_0 = v_0 * 1000 # Convert to m/s
+
+        initial_state = get_sso_orbit_state(starting_epoch, lat, lon, 600e3, northwards=True)
+        r_0 = initial_state[0:3] #/ 1000
+        v_0 = initial_state[3:6] #/ 1000
 
         # Initial position, velocity vector of the satellite [m, m/s]
         self.id = robot_id # Unique identifier for the satellite
@@ -100,7 +86,7 @@ class satellite:
         # Initialize the measurement vector with noise
         # np.random.seed(123)
         # # Add the noise to the initial state vector
-        self.r_m = r_0 + np.random.normal(0, 5000, 3)
+        self.r_m = r_0 + np.random.normal(0, 1000, 3)
         self.r_p = self.r_m
 
         self.v_m = v_0 + np.random.normal(0, 10, 3)
@@ -111,8 +97,8 @@ class satellite:
 
         # Initialize the prior covariance the same as the measurement covariance
         self.cov_m = np.eye(15)
-        self.cov_m[0:3, 0:3] *= 5
-        self.cov_m[3:6, 3:6] *= 5
+        self.cov_m[0:3, 0:3] *= 1
+        self.cov_m[3:6, 3:6] *= 1
         self.cov_m[6:9, 6:9] *= 1e-4
         self.cov_m[9:12, 9:12] *= 1e-4
         self.cov_m[12:15, 12:15] *= 1e-4
@@ -122,7 +108,7 @@ class satellite:
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1)))
         self.curr_visible_landmarks = []
         self.meas_type = meas_type
-        self.HEIGHT = 550
+        # self.HEIGHT = 550
 
         self.config = load_config()
         self.config["solver"]["world_update_rate"] = freq  # Hz
@@ -219,6 +205,8 @@ class satellite:
     ### Visibility functions for landmarks and satellites ###
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
         # Check if the earth is in the way of the own position and the other position
+        own_pos = own_pos / 1000  # Convert to km
+        other_pos = other_pos / 1000  # Convert to km
         d = other_pos - own_pos
         A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
         B = 2*(own_pos[0]*d[0] + own_pos[1]*d[1])/(EQ_RADIUS**2) + 2*own_pos[2]*d[2]/(POLAR_RADIUS**2)
@@ -349,7 +337,7 @@ class satellite:
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
         for i, sat in enumerate(self.curr_visible_sats):
-            norm = jnp.linalg.norm(x[0:3] - sat.x_p[0:3])
+            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e6)
             h= h.at[i].set(norm)
         
         return h
@@ -378,7 +366,7 @@ class satellite:
                 print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
             
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-            z[i] = np.linalg.norm(self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3]) + noise
+            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e6) + noise
             
         return z
     

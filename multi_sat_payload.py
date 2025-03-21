@@ -123,14 +123,15 @@ def run_simulation(args):
     )  
 
     freq = 2
-    time_horizon = 3 * 90 * 15  # s
+    time_horizon = 3 * 90 * 30  # s
     config = load_config()
     config["solver"]["world_update_rate"] = freq  # Hz
     config["mission"]["duration"] = time_horizon # s
 
+    starting_epoch = Epoch(*brahe.time.mjd_to_caldate(config["mission"]["start_date"]))
+
     ### Satellite Initialization ###
-    # TODO: Improve orbits to use actual sso orbits
-    sats = load_sat_config(args=args, Q_noise=Q, freq=freq, time_horizon=time_horizon)
+    sats = load_sat_config(args=args, Q_noise=Q, freq=freq, time_horizon=time_horizon, starting_epoch=starting_epoch)
 
     dt = 1 / config["solver"]["world_update_rate"]
     # starting_epoch = Epoch(*brahe.time.mjd_to_caldate(config["mission"]["start_date"]))

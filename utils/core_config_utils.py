@@ -7,13 +7,14 @@ import os
 from typing import Any, List
 
 import argparse
+from brahe import Epoch
 import numpy as np
 import yaml
 
 #pylint: disable=import-error
 from sat.core import satellite
 
-def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray, freq: float, time_horizon: float) -> List[satellite]:
+def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray, freq: float, time_horizon: float, starting_epoch: Epoch) -> List[satellite]:
     """
     Generate a list of satellite configurations based on the provided arguments 
     and YAML configuration files.
@@ -74,6 +75,10 @@ def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray, freq: float, 
             sat_config["ua"] = np.random.normal(0, 1e-5, 3) * 10
             sat_config["freq"] = freq
             sat_config["time_horizon"] = time_horizon
+            # Start somewhere over Florida/Caribbean
+            sat_config["lat"] = np.random.uniform(0, 2)
+            sat_config["lon"] = np.random.uniform(-73.5, -72.5)
+            sat_config["starting_epoch"] = starting_epoch
 
             satellite_inst = satellite(**sat_config)
             sats.append(satellite_inst)
