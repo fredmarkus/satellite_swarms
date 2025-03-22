@@ -5,7 +5,7 @@ satellites:
     pos_cov_init: 10
     vel_cov_init: 1e-4
     dim: 6
-    R_weight_range: 0.01
+    R_weight_range: 15
     R_weight_land_bearing: 0.01
     R_weight_sat_bearing: 0.01
     landmarks: landmark_objects
@@ -20,7 +20,7 @@ satellites:
     pos_cov_init: 10
     vel_cov_init: 1e-4
     dim: 6
-    R_weight_range: 0.01
+    R_weight_range: 15
     R_weight_land_bearing: 0.01
     R_weight_sat_bearing: 0.01
     landmarks: landmark_objects
@@ -35,7 +35,7 @@ satellites:
     pos_cov_init: 10
     vel_cov_init: 1e-4
     dim: 6
-    R_weight_range: 0.01
+    R_weight_range: 15
     R_weight_land_bearing: 0.01
     R_weight_sat_bearing: 0.01
     landmarks: landmark_objects

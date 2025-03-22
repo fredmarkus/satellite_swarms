@@ -61,7 +61,7 @@ class satellite:
                  ) -> None:
         
 
-
+        lon = lon - robot_id * 0.1
         initial_state = get_sso_orbit_state(starting_epoch, lat, lon, 600e3, northwards=True)
         r_0 = initial_state[0:3] #/ 1000
         v_0 = initial_state[3:6] #/ 1000
@@ -151,6 +151,7 @@ class satellite:
 
         self.z1 = None
         self.measurement_camera_names = None
+        self.day_time = False
 
 
     def predict(self, u: np.ndarray, epoch: Epoch = None) -> None:
@@ -200,7 +201,7 @@ class satellite:
             ]
         )
 
-        self.cov_p = self.A @ self.cov_m @ self.A.T + self.Q_noise
+        # self.cov_p = self.A @ self.cov_m @ self.A.T + self.Q_noise
     
     ### Visibility functions for landmarks and satellites ###
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
@@ -337,7 +338,7 @@ class satellite:
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
         for i, sat in enumerate(self.curr_visible_sats):
-            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e6)
+            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e5)
             h= h.at[i].set(norm)
         
         return h
@@ -366,7 +367,7 @@ class satellite:
                 print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
             
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e6) + noise
+            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e5) + noise
             
         return z
     

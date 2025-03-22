@@ -123,7 +123,7 @@ def run_simulation(args):
     )  
 
     freq = 2
-    time_horizon = 3 * 90 * 30  # s
+    time_horizon = 3.5 * 90 * 60  # s
     config = load_config()
     config["solver"]["world_update_rate"] = freq  # Hz
     config["mission"]["duration"] = time_horizon # s
@@ -239,7 +239,7 @@ def run_simulation(args):
             R_vec = np.array([])  # Combined measurement noise vector
             # M_vec = [] # Combined Jacobian matrix for the process noise
 
-            if i % 120 == 0:
+            if i % 150 == 0:
                 comb_y_m = []  # Combined measurement vector
                 for sat in sats_copy:
                     
