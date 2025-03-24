@@ -76,8 +76,8 @@ def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray, freq: float, 
             sat_config["freq"] = freq
             sat_config["time_horizon"] = time_horizon
             # Start somewhere over Florida/Caribbean
-            sat_config["lat"] = np.random.uniform(0, 2)
-            sat_config["lon"] = np.random.uniform(-73.5, -72.5)
+            sat_config["lat"] = np.random.uniform(0, 0)
+            sat_config["lon"] = np.random.uniform(-73, -73)
             sat_config["starting_epoch"] = starting_epoch
 
             satellite_inst = satellite(**sat_config)

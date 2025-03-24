@@ -82,7 +82,7 @@ def plot_position_error(pos_error):
     plt.plot(error_z, label='z position error', color='green')
     plt.title('Absolute Position Error for Satellite 1 ')
     plt.xlabel('Timestep')
-    plt.ylabel('Absolute Position Error (km)')
+    plt.ylabel('Absolute Position Error (m)')
     plt.legend()
 
 
@@ -140,7 +140,7 @@ def all_sat_position_error(pos_error,n_sats,meas_type, cov_hist):
 
         plt.title(f'Absolute Position Error (LVLH) for {n_sats} satellites for measurement type {meas_type}')
         plt.xlabel('Timestep')
-        plt.ylabel('Absolute Position Error (km)')
+        plt.ylabel('Absolute Position Error (m)')
         plt.legend()
 
 def random_color():

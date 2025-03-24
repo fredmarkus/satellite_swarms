@@ -39,6 +39,7 @@ from utils.config_utils import load_config
 from gnc_payload.utils.orbit_utils import get_max_sso_latitude
 from gnc_payload.sensors.camera_model import CameraModelManager
 from gnc_payload.utils.brahe_utils import load_brahe_data_files
+from gnc_payload.utils.orbit_utils import is_over_daytime
 
 
 import pickle
@@ -123,7 +124,7 @@ def run_simulation(args):
     )  
 
     freq = 2
-    time_horizon = 3.5 * 90 * 60  # s
+    time_horizon = 1.5 * 90 * 60  # s
     config = load_config()
     config["solver"]["world_update_rate"] = freq  # Hz
     config["mission"]["duration"] = time_horizon # s
@@ -192,14 +193,14 @@ def run_simulation(args):
             if args.verbose:   
                 print("Timestep", i)
             
-            latest_epoch = sats[0].data_manager.latest_epoch
+            latest_epoch = sats_copy[0].data_manager.latest_epoch
             rot = w  + 0.05 * np.array([np.cos(2*np.pi * i / (10 / dt)), np.sin(2*np.pi * i / (10 / dt)), 0])
 
             for k, sat in enumerate(sats_copy):
 
                 if sat.id == 0 and anchor:
                     #TODO: Replace the x_m for the anchor case
-                    sat.x_m = ground_truth_dynamics.perturbed_f(sat[0].curr_pos, dt, epoch=latest_epoch)
+                    sat.x_m = ground_truth_dynamics.perturbed_f(sats_copy[0].curr_pos, dt, epoch=latest_epoch)
                     cov_m[0:6,0:6] = 1e-20*np.eye(6)
                     cov_p[0:6,0:6] = 1e-20*np.eye(6)
 
@@ -210,7 +211,6 @@ def run_simulation(args):
 
                 next_state = ground_truth_dynamics.perturbed_f(x=x_gt,dt=dt, epoch=latest_epoch)
                 next_quat = quaternion.from_rotation_matrix(q) * quaternion.from_rotation_vector(w * dt)
-                sat.data_manager.push_next_state(next_state[0:6], quaternion.as_rotation_matrix(next_quat))
 
                 # Get an IMU measurement for the satellite
                 gyro_meas, _ = sat.imu.update(rot, np.zeros((3,)))
@@ -222,6 +222,8 @@ def run_simulation(args):
                 A[k * state_dim : (k + 1) * state_dim,
                   k * state_dim : (k + 1) * state_dim,
                 ] = sat.A
+
+                sat.data_manager.push_next_state(next_state[0:6], quaternion.as_rotation_matrix(next_quat))
 
                 # Update the combined state vector and underlying groundtruth
                 total_x_p[k * state_dim : (k + 1) * state_dim] = sat.x_p
@@ -239,7 +241,7 @@ def run_simulation(args):
             R_vec = np.array([])  # Combined measurement noise vector
             # M_vec = [] # Combined Jacobian matrix for the process noise
 
-            if i % 150 == 0:
+            if i % 120 == 0:
                 comb_y_m = []  # Combined measurement vector
                 for sat in sats_copy:
                     
@@ -250,8 +252,10 @@ def run_simulation(args):
                     # Get visible landmarks using actual current position of other satellites
                     # visible_landmarks = sat.visible_landmarks_list()
                     visible_sats = sat.visible_sats_list(sats_copy)
+                    sat.day_time = is_over_daytime(latest_epoch, sat.data_manager.latest_state[0:3])
+                    sat.land_bearing_dim = 0
 
-                    if "land" in meas_type:
+                    if "land" in meas_type and sat.day_time:
                         for camera_name in CameraModelManager.CAMERA_NAMES:
                             sat.data_manager.take_measurement(
                                 sat.landmark_bearing_sensor,sat.camera_model_manager[camera_name]
@@ -343,7 +347,7 @@ def run_simulation(args):
 
                             comb_h.extend(h)
                             # Calculate Jacobian matrix H for combined state (still just one satellite H)
-                            H = combined_H(sat, sat.meas_dim, state_dim, meas_type, sat.z1, sat.camera_model_manager, sat.measurement_camera_names, sat.x_m, epoch=latest_epoch)
+                            H = combined_H(sat, state_dim, meas_type, epoch=latest_epoch)
                             if comb_H.size == 0:
                                     comb_H = H
                             else:
@@ -437,8 +441,8 @@ def run_simulation(args):
     pos_error = np.mean(pos_error, axis=0)
 
     # Calculate Covariance and CRB trace
-    cov_trace = get_cov_trace(N, cov_hist, n_sats)
-    crb_trace = get_crb_trace(N, fim, n_sats)
+    # cov_trace = get_cov_trace(N, cov_hist, n_sats)
+    # crb_trace = get_crb_trace(N, fim, n_sats)
 
 
     # Save the results to files

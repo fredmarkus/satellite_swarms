@@ -68,7 +68,7 @@ class satellite:
 
         # Initial position, velocity vector of the satellite [m, m/s]
         self.id = robot_id # Unique identifier for the satellite
-        self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
+        # self.dim = dim # State dimension of the satellite (currently 3 position + 3 velocity)
         self.R_weight_range = float(R_weight_range)
         self.R_weight_land_bearing = float(R_weight_land_bearing)
         self.R_weight_sat_bearing = float(R_weight_sat_bearing)
@@ -84,7 +84,6 @@ class satellite:
         self.range_dim = 0
 
         # Initialize the measurement vector with noise
-        # np.random.seed(123)
         # # Add the noise to the initial state vector
         self.r_m = r_0 + np.random.normal(0, 1000, 3)
         self.r_p = self.r_m
@@ -123,6 +122,11 @@ class satellite:
         init_rot = np.eye(3)
         noisy_rot = init_rot + np.random.normal(0, 1e-2, (3, 3))
         noisy_rot = noisy_rot @ np.linalg.inv(np.linalg.cholesky(noisy_rot.T @ noisy_rot))
+
+        # Assert orthonormality
+        assert np.allclose(noisy_rot @ noisy_rot.T, np.eye(3), atol=1e-3) and np.isclose(
+            np.linalg.det(noisy_rot), 1
+        ), "Rotation matrix is not a proper rotation matrix"
 
         # Ground truth states
         x_0 = np.concatenate([r_0, v_0])
