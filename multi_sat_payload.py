@@ -111,7 +111,7 @@ def run_simulation(args):
     Q_block = block_diag(*[Q for _ in range(n_sats)])
     # Individual covariance matrix for each satellite
     ind_cov = np.diag(
-        np.array([5, 5, 5, 5, 5, 5, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4])
+        np.array([5e-3, 5e-3, 5e-3, 5e-3, 5e-3, 5e-3, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4, 1e-4])
     )  
 
     freq = 2
@@ -247,7 +247,7 @@ def run_simulation(args):
                     # Get visible landmarks using actual current position of other satellites
                     # visible_landmarks = sat.visible_landmarks_list()
                     visible_sats = sat.visible_sats_list(sats_copy)
-                    sat.day_time = is_over_daytime(latest_epoch, sat.data_manager.latest_state[0:3])
+                    sat.day_time = is_over_daytime(latest_epoch, sat.data_manager.latest_state[0:3] * 1e3)
                     sat.land_bearing_dim = 0
 
                     if "land" in meas_type and sat.day_time:
@@ -466,7 +466,7 @@ if __name__ == "__main__":
 
     #Setup data directory
     setup_data_dir()
-    # np.random.seed(69420)
+    np.random.seed(69420)
     
     ### Landmark Initialization ###
     landmark_objects = import_landmarks()

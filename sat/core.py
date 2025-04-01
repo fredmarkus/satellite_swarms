@@ -64,13 +64,13 @@ def imu_init(dt: float) -> IMU:
     ]
     # sigma_v [units/sqrt(Hz)] & scale_factor_error [-]
     sensor_noise_params_gyro_x = SensorNoiseParams.get_random_params(
-        bias_params_x, [1e-6, 1e-5], [0.01, 0.01]
+        bias_params_x, [1e-6, 1e-5], [0, 0.01]
     )
     sensor_noise_params_gyro_y = SensorNoiseParams.get_random_params(
-        bias_params_y, [1e-6, 1e-5], [0.01, 0.01]
+        bias_params_y, [1e-6, 1e-5], [0, 0.01]
     )
     sensor_noise_params_gyro_z = SensorNoiseParams.get_random_params(
-        bias_params_z, [1e-6, 1e-5], [0.01, 0.01]
+        bias_params_z, [1e-6, 1e-5], [0, 0.01]
     )
     sensor_noise_params_gyro = [
         sensor_noise_params_gyro_x,
@@ -84,7 +84,7 @@ def imu_init(dt: float) -> IMU:
     imu = IMU(
         dt=dt,
         IMU_noise_params=imu_noise_params,
-        misalignment_range=[0.01, 0.01],
+        misalignment_range=[0, 0.01],
     )
 
     return imu
@@ -120,10 +120,10 @@ class satellite:
                  ) -> None:
         
 
-        lon = lon - robot_id * 0.1
+        lon = lon - robot_id
         initial_state = get_sso_orbit_state(starting_epoch, lat, lon, 600e3, northwards=True)
-        r_0 = initial_state[0:3] #/ 1000
-        v_0 = initial_state[3:6] #/ 1000
+        r_0 = initial_state[0:3] / 1000
+        v_0 = initial_state[3:6] / 1000
 
         # Initial position, velocity vector of the satellite [m, m/s]
         self.id = robot_id # Unique identifier for the satellite
@@ -144,10 +144,10 @@ class satellite:
 
         # Initialize the measurement vector with noise
         # # Add the noise to the initial state vector
-        self.r_m = r_0 + np.random.normal(0, 1000, 3)
+        self.r_m = r_0 + np.random.normal(0, 1, 3)
         self.r_p = self.r_m
 
-        self.v_m = v_0 + np.random.normal(0, 10, 3)
+        self.v_m = v_0 + np.random.normal(0, 0.01, 3)
         self.v_p = self.v_m
 
         #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
@@ -203,7 +203,7 @@ class satellite:
         self.w_b = (self.imu.get_bias()[0] + np.random.normal(0, 5e-5, 3)) * self.gyro_bias_scale
         self.q_m = quaternion.as_float_array(quaternion.from_rotation_matrix(noisy_rot))
         self.q_p = self.q_m
-        self.ua = np.random.normal(0, 1e-5, 3) * self.ua_scale
+        self.ua = np.random.normal(0, 1e-8, 3) * self.ua_scale
         self.drag_est = np.array([1])
 
         self.Q_noise = Q_noise
@@ -265,8 +265,8 @@ class satellite:
     ### Visibility functions for landmarks and satellites ###
     def is_visible_ellipse(self, own_pos, other_pos) -> bool:
         # Check if the earth is in the way of the own position and the other position
-        own_pos = own_pos / 1000  # Convert to km
-        other_pos = other_pos / 1000  # Convert to km
+        own_pos = own_pos
+        other_pos = other_pos
         d = other_pos - own_pos
         A = (d[0]**2 + d[1]**2)/(EQ_RADIUS**2) + (d[2]**2)/(POLAR_RADIUS**2)
         B = 2*(own_pos[0]*d[0] + own_pos[1]*d[1])/(EQ_RADIUS**2) + 2*own_pos[2]*d[2]/(POLAR_RADIUS**2)
@@ -397,7 +397,7 @@ class satellite:
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
         for i, sat in enumerate(self.curr_visible_sats):
-            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e8)
+            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e3)
             h= h.at[i].set(norm)
         
         return h
@@ -425,8 +425,8 @@ class satellite:
             if self.verbose and ("range" in self.meas_type):
                 print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
             
-            noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e8) + noise
+            noise = np.random.normal(loc=0,scale=0.01,size=(1))
+            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e3) + noise
             
         return z
     
