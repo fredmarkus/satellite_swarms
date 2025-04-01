@@ -14,22 +14,81 @@ from gnc_payload.orbit_determination.od_simulation_data_manager import ODSimulat
 from gnc_payload.sensors.camera_model import CameraModelManager
 from gnc_payload.utils.orbit_utils import get_sso_orbit_state
 from landmarks.landmark import landmark
-from utils.imu_utils import imu_init
-from utils.math_utils import R_X
-from utils.math_utils import R_Z
-from utils.math_utils import az_el_to_vector
-from utils.math_utils import vector_to_az_el
-from utils.config_utils import load_config
+from my_utils.math_utils import az_el_to_vector
+from my_utils.math_utils import vector_to_az_el
+from my_utils.config_utils import load_config
 
 
 from gnc_payload.dynamics.ekf_dynamics import EKFDynamics
 from gnc_payload.utils.math_utils import left_q, Drp2q, G, rot_2_q, R
+from gnc_payload.sensors.imu import IMU, IMUNoiseParams
+from gnc_payload.sensors.sensor import SensorNoiseParams
+from gnc_payload.sensors.bias import BiasParams
 # Constants
 MU = 3.986004418 * 10**5 # km^3/s^2 # Gravitational parameter of the Earth
 MASS = 1 # kg # Mass of the satellite
 AREA = 1e-7 # km^2 # Cross-sectional area of the satellite
 EQ_RADIUS = 6378.1370 # km # Equatorial radius of the Earth
 POLAR_RADIUS = 6356.7523 # km # Polar radius of the Earth
+
+
+def imu_init(dt: float) -> IMU:
+    """
+    Initializes the IMU.
+
+    :param dt: The time step for the simulation.
+
+    :return: The initialized IMU.
+    """
+    # Initialize the IMU
+    # bias params are min max range of bias and sigma_w
+    # [units] and [(units/s)/sqrt(Hz)]
+    bias_params_x = BiasParams.get_random_params([-1e-2, 1e-2], [1e-6, 1e-5])
+    bias_params_y = BiasParams.get_random_params([-1e-2, 1e-2], [1e-6, 1e-5])
+    bias_params_z = BiasParams.get_random_params([-1e-2, 1e-2], [1e-6, 1e-5])
+    # bias_params = BiasParams.get_random_params([0, 0], [0, 0])
+    # sigma_v [units/sqrt(Hz)] & scale_factor_error [-]
+    sensor_noise_params_accel_x = SensorNoiseParams.get_random_params(
+        bias_params_x, [0, 0.0], [0, 0.0]
+    )
+    sensor_noise_params_accel_y = SensorNoiseParams.get_random_params(
+        bias_params_y, [0, 0.0], [0, 0.0]
+    )
+    sensor_noise_params_accel_z = SensorNoiseParams.get_random_params(
+        bias_params_z, [0, 0.0], [0, 0.0]
+    )
+    sensor_noise_params_accel = [
+        sensor_noise_params_accel_x,
+        sensor_noise_params_accel_y,
+        sensor_noise_params_accel_z,
+    ]
+    # sigma_v [units/sqrt(Hz)] & scale_factor_error [-]
+    sensor_noise_params_gyro_x = SensorNoiseParams.get_random_params(
+        bias_params_x, [1e-6, 1e-5], [0.01, 0.01]
+    )
+    sensor_noise_params_gyro_y = SensorNoiseParams.get_random_params(
+        bias_params_y, [1e-6, 1e-5], [0.01, 0.01]
+    )
+    sensor_noise_params_gyro_z = SensorNoiseParams.get_random_params(
+        bias_params_z, [1e-6, 1e-5], [0.01, 0.01]
+    )
+    sensor_noise_params_gyro = [
+        sensor_noise_params_gyro_x,
+        sensor_noise_params_gyro_y,
+        sensor_noise_params_gyro_z,
+    ]
+
+    imu_noise_params = IMUNoiseParams(
+        gyro_params=sensor_noise_params_gyro, accel_params=sensor_noise_params_accel
+    )
+    imu = IMU(
+        dt=dt,
+        IMU_noise_params=imu_noise_params,
+        misalignment_range=[0.01, 0.01],
+    )
+
+    return imu
+
 
 class satellite:
 
@@ -94,15 +153,6 @@ class satellite:
         #Determines the current position of the satellite (Necessary for landmark bearing and satellite ranging)
         self.curr_pos = r_0
 
-        # Initialize the prior covariance the same as the measurement covariance
-        self.cov_m = np.eye(15)
-        self.cov_m[0:3, 0:3] *= 1
-        self.cov_m[3:6, 3:6] *= 1
-        self.cov_m[6:9, 6:9] *= 1e-4
-        self.cov_m[9:12, 9:12] *= 1e-4
-        self.cov_m[12:15, 12:15] *= 1e-4
-        self.cov_p = self.cov_m
-
         # Provide the position of the other satellites for all N timesteps
         self.other_sats_pos = np.zeros((N+1, 3, int(n_sats-1)))
         self.curr_visible_landmarks = []
@@ -142,6 +192,10 @@ class satellite:
             use_drag=False,
             use_j2=False,
             use_unmodelled_a=True,
+            use_drag_scalar=True,
+            use_j34=False,
+            use_moon_grav=False,
+            use_sun_grav=False,
             ua_scale=self.ua_scale
         )
 
@@ -149,7 +203,8 @@ class satellite:
         self.w_b = (self.imu.get_bias()[0] + np.random.normal(0, 5e-5, 3)) * self.gyro_bias_scale
         self.q_m = quaternion.as_float_array(quaternion.from_rotation_matrix(noisy_rot))
         self.q_p = self.q_m
-        self.ua = ua
+        self.ua = np.random.normal(0, 1e-5, 3) * self.ua_scale
+        self.drag_est = np.array([1])
 
         self.Q_noise = Q_noise
 
@@ -174,7 +229,7 @@ class satellite:
 
         w = u[0:3]  # angular velocity measurement from IMU
 
-        x = np.concatenate([self.r_m, self.v_m, self.ua])
+        x = np.concatenate([self.r_m, self.v_m, self.ua, self.drag_est])
         x_new = self.ekf_dynamics.perturbed_f(x=x, dt=self.dt, epoch=epoch)
         A_pos = self.ekf_dynamics.perturbed_f_jac(x=x, dt=self.dt, epoch=epoch)
 
@@ -184,7 +239,7 @@ class satellite:
 
         self.r_p = x_new[0:3]
         self.v_p = x_new[3:6]
-        self.x_p = np.concatenate([self.r_p, self.v_p, self.ua, quaternion.as_rotation_vector(quaternion.as_quat_array(self.q_p)), self.w_b])
+        self.x_p = np.concatenate([self.r_p, self.v_p, self.ua, self.drag_est, quaternion.as_rotation_vector(quaternion.as_quat_array(self.q_p)), self.w_b])
 
         dqdq = quaternion.as_rotation_matrix(
             quaternion.from_rotation_vector(-1 * self.dt * (w - self.w_b / self.gyro_bias_scale))
@@ -199,9 +254,9 @@ class satellite:
 
         self.A = np.block(
             [
-                [A_pos, np.zeros((9, 6))],
-                [np.zeros((3, 9)), dqdq, dqdw],
-                [np.zeros((3, 12)), np.eye(3)],
+                [A_pos, np.zeros((10, 6))],
+                [np.zeros((3, 10)), dqdq, dqdw],
+                [np.zeros((3, 13)), np.eye(3)],
             ]
         )
 
@@ -274,7 +329,7 @@ class satellite:
 
         # Define rotation matrices
         # transform rotation_vector to rotation matrix via quaternion
-        eci_R_body = R(rot_2_q(x_p[9:12]))
+        eci_R_body = R(rot_2_q(x_p[10:13]))
         ecef_R_eci = brahe.frames.rECItoECEF(epc=epoch)
         ecef_R_body = ecef_R_eci @ eci_R_body
 
@@ -342,7 +397,7 @@ class satellite:
     def h_inter_range(self, x):
         h = jnp.zeros((len(self.curr_visible_sats)))
         for i, sat in enumerate(self.curr_visible_sats):
-            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e5)
+            norm = jnp.linalg.norm((x[0:3] - sat.x_p[0:3])/1e8)
             h= h.at[i].set(norm)
         
         return h
@@ -371,7 +426,7 @@ class satellite:
                 print(f"Satellite {self.id} can take range measurement to satellite {sat.id}")
             
             noise = np.random.normal(loc=0,scale=math.sqrt(self.R_weight_range),size=(1))
-            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e5) + noise
+            z[i] = np.linalg.norm((self.data_manager.latest_state[0:3] - sat.data_manager.latest_state[0:3])/1e8) + noise
             
         return z
     

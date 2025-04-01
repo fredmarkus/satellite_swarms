@@ -72,7 +72,7 @@ def load_sat_config(args: argparse.Namespace, Q_noise: np.ndarray, freq: float, 
             sat_config["ignore_earth"] = args.ignore_earth
             sat_config["meas_type"] = args.measurement_type
             sat_config["Q_noise"] = Q_noise
-            sat_config["ua"] = np.random.normal(0, 1e-5, 3) * 10
+            sat_config["ua"] = np.zeros((3))
             sat_config["freq"] = freq
             sat_config["time_horizon"] = time_horizon
             # Start somewhere over Florida/Caribbean
